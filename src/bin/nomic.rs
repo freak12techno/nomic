@@ -2953,15 +2953,33 @@ impl RelayEthereumCmd {
                 ._0;
             dbg!(&dest_str, amount, sender);
 
-            let (consensus_proof, state_proof) =
-                ethereum::relayer::get_proofs(&provider, bridge_contract_addr, nomic_index).await?;
+            // ?: same rpc as used in provider?
+            let rpc_client = ethereum::consensus::relayer::RpcClient::new(self.eth_rpc_url.clone());
+            let chain_id = self.eth_chainid.clone();
+            // TODO: use chain_id in closure without breaking fn coercion
+            let lc = client.sub(|app: InnerApp| Ok(app.ethereum.light_client(11155111)?));
+            let updates = ethereum::consensus::relayer::get_updates(&lc, &rpc_client).await?;
+            // ?: which block height / hash to query for state proof?
+            // something from finalized_header or attested_header?
+            updates.last().unwrap().finalized_header.parent_root;
+
+            let block_number = 123; // ?
+
+            let state_proof = ethereum::relayer::get_state_proof(
+                &provider,
+                bridge_contract_addr,
+                nomic_index,
+                block_number,
+            )
+            .await?;
+
             client
                 .call(
                     move |app| {
                         build_call!(app.ethereum.relay_return(
                             self.eth_chainid,
                             bridge_contract,
-                            consensus_proof.clone(),
+                            update.clone(),
                             state_proof.clone()
                         ))
                     },

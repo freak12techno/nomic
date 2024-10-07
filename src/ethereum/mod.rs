@@ -7,8 +7,9 @@ use bitcoin::secp256k1::{
     Message, PublicKey, Secp256k1,
 };
 use bitcoin::Script;
-use orga::query::MethodQuery;
-use proofs::{BridgeContractData, ConsensusProof, ConsensusState, StateProof};
+use consensus::LightClient;
+use orga::{context::GetContext as _, plugins::Time, query::MethodQuery};
+use proofs::{BridgeContractData, ConsensusState, StateProof};
 use std::collections::BTreeSet;
 use std::u64;
 
@@ -119,29 +120,27 @@ impl Ethereum {
         &mut self,
         network: u32,
         connection: Address,
-        consensus_proof: ConsensusProof,
+        consensus_proof: consensus::Update,
         state_proof: StateProof,
     ) -> Result<()> {
         exempt_from_fee()?;
+        let now_seconds = self.now()? as u64;
 
         let mut net = self
             .networks
             .get_mut(network)?
             .ok_or_else(|| Error::App("network not found".to_string()))?;
 
-        net.update_consensus_state(consensus_proof)?;
-        // TODO
-        // let consensus_state = net.consensus_state.clone();
+        net.update_consensus_state(consensus_proof, now_seconds)?;
+        let state_root = net.light_client.state_root().0;
 
         let mut conn = net
             .connections
             .get_mut(connection)?
             .ok_or_else(|| Error::App("connection not found".to_string()))?;
 
-        // TODO
-        // let consensus_state: ConsensusState = todo!();
-        // conn.relay_return(network, &consensus_state, state_proof)
-        Ok(())
+        let consensus_state: ConsensusState = todo!();
+        conn.relay_return(network, state_root, state_proof)
     }
 
     #[call]
@@ -304,6 +303,23 @@ impl Ethereum {
         let msg = conn.get(msg_index)?;
         Ok((msg.sigs.message, conn.get_sigs(msg_index)?, msg.msg.clone()))
     }
+
+    #[query]
+    pub fn light_client(&self, chain_id: u32) -> Result<LightClient> {
+        Ok(self
+            .networks
+            .get(chain_id)?
+            .ok_or(Error::App("Chain not found".to_string()))?
+            .light_client
+            .clone())
+    }
+
+    fn now(&mut self) -> Result<i64> {
+        Ok(self
+            .context::<Time>()
+            .ok_or_else(|| Error::App("No time context available".into()))?
+            .seconds)
+    }
 }
 type ToSign = Vec<(u32, Address, u64, u32, [u8; 32], OutMessageArgs)>;
 type Sigs = Vec<(Pubkey, Option<Signature>)>;
@@ -311,12 +327,23 @@ type Sigs = Vec<(Pubkey, Option<Signature>)>;
 #[orga]
 pub struct Network {
     pub id: u32,
-    pub connections: Map<Address, Connection>, /* TODO: use an eth address type
-                                                * pub consensus_state: ConsensusState, */
+    pub connections: Map<Address, Connection>, // TODO: use an eth address type
+    pub light_client: consensus::LightClient,
 }
 
 #[orga]
 impl Network {
+    pub fn new(id: u32, bootstrap: consensus::Bootstrap) -> Result<Self> {
+        let cons_network = consensus::Network::ethereum_mainnet(); // TODO
+        let light_client = consensus::LightClient::new(bootstrap, cons_network)?;
+
+        Ok(Self {
+            id,
+            connections: Map::new(),
+            light_client,
+        })
+    }
+
     pub fn step(&mut self, active_sigset: &SignatorySet) -> Result<()> {
         let addrs: Vec<_> = self
             .connections
@@ -359,8 +386,14 @@ impl Network {
             .ok_or_else(|| Error::App("Unknown connection".to_string()))?)
     }
 
-    pub fn update_consensus_state(&mut self, consensus_proof: ConsensusProof) -> Result<()> {
-        // self.consensus_state = consensus_proof.verify(&self.consensus_state)?;
+    pub fn update_consensus_state(
+        &mut self,
+        consensus_proof: consensus::Update,
+        now_seconds: u64,
+    ) -> Result<()> {
+        // self.consensus_state =
+        // consensus_proof.verify(&self.consensus_state)?;
+        self.light_client.update(consensus_proof, now_seconds)?;
 
         Ok(())
     }
@@ -563,7 +596,7 @@ impl Connection {
     pub fn relay_return(
         &mut self,
         network: u32,
-        consensus_state: &ConsensusState,
+        state_root: [u8; 32],
         state_proof: StateProof,
     ) -> Result<()> {
         exempt_from_fee()?;
@@ -588,7 +621,7 @@ impl Connection {
             amount,
             sender,
             index,
-        } in state_proof.verify(consensus_state.state_root)?
+        } in state_proof.verify(state_root)?
         {
             if index != self.return_index {
                 return Err(orga::Error::App("Return index does not match".to_string()).into());
@@ -1350,13 +1383,10 @@ mod tests {
         let token_contract = Address::NULL;
         let chain_id = 1337;
 
-        ethereum.networks.insert(
-            chain_id,
-            Network {
-                id: chain_id,
-                connections: Default::default(),
-            },
-        )?;
+        let bootstrap: consensus::Bootstrap = todo!();
+        ethereum
+            .networks
+            .insert(chain_id, Network::new(chain_id, bootstrap)?)?;
 
         ethereum.create_connection(chain_id, bridge_contract, token_contract, valset.clone())?;
 
@@ -1704,6 +1734,7 @@ mod tests {
         Context::remove::<Paid>();
     }
 
+    #[cfg(any())]
     #[ignore]
     #[tokio::test]
     #[serial_test::serial]

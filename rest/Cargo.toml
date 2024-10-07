@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 rocket = { version = "0.5.0-rc.1", features = ["json", "tls"] }
-nomic = { path = "..", default-features = false, features = [
+nomic = { path = "..", default-features = true, features = [
     "full",
     "testnet",
 ] }

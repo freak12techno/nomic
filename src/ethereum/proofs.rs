@@ -17,6 +17,8 @@ use rlp::{Decodable as _, Rlp};
 use rlp_derive::RlpDecodable;
 use trie_db::{Trie, TrieDBBuilder};
 
+use super::consensus;
+
 #[derive(RlpDecodable, Debug)]
 struct Account {
     _nonce: u64,
@@ -83,13 +85,9 @@ impl StateProof {
             address: Address::from(proof.address.0 .0),
             start_index,
             account_proof,
-            storage_proofs: state_proofs.try_into().map_err(|_e| {
-                Error::Relayer(
-                    "Invalid storage
-        proof"
-                        .to_string(),
-                )
-            })?,
+            storage_proofs: state_proofs
+                .try_into()
+                .map_err(|_e| Error::Relayer("Invalid storage proof".to_string()))?,
         })
     }
 
@@ -287,15 +285,7 @@ pub fn extra_slots_required(len: usize) -> usize {
 // updated header
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct ConsensusProof {
-    pub state_root: [u8; 32],
-}
-
-impl ConsensusProof {
-    pub fn verify(self, prev_consensus_state: &ConsensusState) -> AppResult<ConsensusState> {
-        Ok(ConsensusState {
-            state_root: self.state_root,
-        })
-    }
+    pub updates: LengthVec<u16, consensus::Update>,
 }
 
 // sync committee / next_sync_committee won't change across updates except when

@@ -17,7 +17,8 @@ use helios_consensus_core::{
     verify_bootstrap, verify_finality_update, verify_update,
 };
 use orga::{
-    call::FieldCall, encoding::LengthVec, migrate::Migrate, orga, query::FieldQuery, state::State,
+    call::FieldCall, describe::Describe, encoding::LengthVec, migrate::Migrate, orga,
+    query::FieldQuery, state::State,
 };
 use serde::{Deserialize, Serialize};
 use serde_hex::{SerHex, StrictPfx};
@@ -206,6 +207,12 @@ impl Decode for LightClient {
 }
 
 impl Terminated for LightClient {}
+
+impl Describe for LightClient {
+    fn describe() -> orga::describe::Descriptor {
+        orga::describe::Builder::new::<Self>().meta::<()>().build()
+    }
+}
 
 #[derive(Clone, Debug, Default, Encode, Decode, Serialize, Deserialize)]
 pub struct Network {

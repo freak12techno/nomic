@@ -1,32 +1,27 @@
+use super::consensus;
 use super::proofs::{BridgeContractData, ConsensusProof, StateProof};
 use crate::error::Result as AppResult;
 use crate::ethereum::proofs::extra_slots_required;
 use alloy_core::primitives::Address as EthAddress;
 use alloy_primitives::Uint;
 use alloy_provider::Provider;
+use alloy_rpc_types::BlockId;
 use alloy_transport::Transport;
 
-pub async fn get_proofs<
+pub async fn get_state_proof<
     T: Clone + Transport,
     P: Provider<T, alloy_provider::network::Ethereum> + Clone,
 >(
     provider: P,
     address: EthAddress,
     index: u64,
-) -> AppResult<(ConsensusProof, StateProof)> {
-    let block_id = provider
-        .get_block_number()
-        .await
-        .map_err(|e| crate::error::Error::Relayer(e.to_string()))?;
+    block_number: u64,
+) -> AppResult<StateProof> {
     let block = provider
-        .get_block_by_number(block_id.into(), true)
+        .get_block_by_number(block_number.into(), true)
         .await
         .map_err(|e| crate::error::Error::Relayer(e.to_string()))?
         .unwrap();
-
-    let consensus_proof = ConsensusProof {
-        state_root: block.header.state_root.0,
-    };
 
     let contract = super::bridge_contract::new(address, provider.clone());
     let contract_index: u64 = contract
@@ -67,11 +62,11 @@ pub async fn get_proofs<
             address,
             keys_to_prove.into_iter().map(|k| k.into()).collect(),
         )
-        .number(block_id)
+        .number(block_number)
         .await
         .map_err(|e| crate::error::Error::Relayer(e.to_string()))?;
 
     let state_proof = StateProof::from_response(proof_res, dests).unwrap();
 
-    Ok((consensus_proof, state_proof))
+    Ok(state_proof)
 }
