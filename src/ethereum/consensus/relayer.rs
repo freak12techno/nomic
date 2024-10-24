@@ -7,7 +7,7 @@ use super::{
     encode_sync_aggregate, Bootstrap, Bytes32, Header, LightClient, SyncAggregate, SyncCommittee,
     Update,
 };
-use crate::{app, babylon::proto::FinalityProvider, error::Result};
+use crate::{app, error::Result};
 
 use super::{encode_header, encode_sync_committee};
 

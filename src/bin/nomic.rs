@@ -33,6 +33,7 @@ use nomic::bitcoin::signatory::SignatorySet;
 use nomic::bitcoin::Nbtc;
 use nomic::bitcoin::{relayer::Relayer, signer::Signer};
 use nomic::error::Result;
+#[cfg(feature = "ethereum")]
 use nomic::ethereum;
 #[cfg(feature = "frost")]
 use nomic::frost::{self, signer::SecretStore};
