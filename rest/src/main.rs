@@ -757,6 +757,15 @@ async fn distribution_delegators_rewards(address: &str) -> Value {
     })
 }
 
+#[get("/cosmos/distribution/v1beta1/validators/<address>/commission")]
+async fn distribution_validator_commission(address: &str) -> Value {
+    json!({
+        "commission": {
+            "commission": []
+        }
+    })
+}
+
 #[get("/cosmos/distribution/v1beta1/delegators/<address>/rewards/<validator_address>")]
 async fn distribution_delegators_rewards_for_validator(
     address: &str,
@@ -1466,6 +1475,7 @@ fn rocket() -> _ {
             staking_validator_single_delegation,
             distribution_delegators_rewards,
             distribution_delegators_rewards_for_validator,
+            distribution_validator_commission,
             minting_inflation,
             minting_inflation_2,
             staking_pool,
