@@ -483,7 +483,9 @@ impl InnerApp {
     ) -> Result<()> {
         let mut succeeded = false;
         let amount = coins.amount;
-        if self.validate_dest(&dest, amount, sender).is_ok() {
+        if let Err(e) = self.validate_dest(&dest, amount, sender) {
+            log::debug!("Error validating transfer: {}", e);
+        } else {
             if let Err(e) = self.credit_dest(dest.clone(), coins.take(amount)?, sender) {
                 log::debug!("Error crediting transfer: {:?}", e);
                 // TODO: ensure no errors can happen after mutating
