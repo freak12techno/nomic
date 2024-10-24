@@ -194,6 +194,8 @@ pub enum Command {
     EthTransferNbtc(EthTransferNbtcCmd),
     #[cfg(feature = "ethereum")]
     GetSigsetEthAddresses(GetSigsetEthAddressesCmd),
+    #[cfg(feature = "ethereum")]
+    CreateEthConnection(CreateEthConnectionCmd),
 }
 
 impl Command {
@@ -270,6 +272,8 @@ impl Command {
                 EthTransferNbtc(cmd) => cmd.run().await,
                 #[cfg(feature = "ethereum")]
                 GetSigsetEthAddresses(cmd) => cmd.run().await,
+                #[cfg(feature = "ethereum")]
+                CreateEthConnection(cmd) => cmd.run().await,
             }
         })
     }
@@ -3062,6 +3066,55 @@ impl GetSigsetEthAddressesCmd {
             );
         }
         println!("]");
+
+        Ok(())
+    }
+}
+
+#[cfg(feature = "ethereum")]
+#[derive(Parser, Debug)]
+pub struct CreateEthConnectionCmd {
+    #[clap(long)]
+    eth_chainid: u32,
+    #[clap(long)]
+    bridge_contract_addr: String,
+    #[clap(long)]
+    token_contract_addr: String,
+    #[clap(long)]
+    sigset_index: u32,
+
+    #[clap(flatten)]
+    config: nomic::network::Config,
+}
+
+#[cfg(feature = "ethereum")]
+impl CreateEthConnectionCmd {
+    async fn run(&self) -> Result<()> {
+        let client = self.config.client().with_wallet(wallet());
+
+        let bc_vec = hex::decode(&self.bridge_contract_addr).unwrap();
+        let mut bc_bytes = [0u8; 20];
+        bc_bytes.copy_from_slice(&bc_vec);
+        let bridge_contract = Address::from(bc_bytes);
+
+        let tc_vec = hex::decode(&self.token_contract_addr).unwrap();
+        let mut tc_bytes = [0u8; 20];
+        tc_bytes.copy_from_slice(&tc_vec);
+        let token_contract = Address::from(tc_bytes);
+
+        client
+            .call(
+                move |app| {
+                    build_call!(app.eth_create_connection(
+                        self.eth_chainid,
+                        bridge_contract,
+                        token_contract,
+                        self.sigset_index
+                    ))
+                },
+                |app| build_call!(app.app_noop()),
+            )
+            .await?;
 
         Ok(())
     }
