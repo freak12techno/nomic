@@ -927,6 +927,22 @@ mod abci {
                         let address = line.parse().unwrap();
                         self.accounts.deposit(address, Coin::mint(10_000_000_000))
                     })?;
+
+                #[cfg(feature = "ethereum")]
+                {
+                    // Add Ethereum Sepolia
+                    let bootstrap =
+                        serde_json::from_str(include_str!("./ethereum/bootstrap/sepolia.json"))
+                            .unwrap();
+                    self.ethereum.networks.insert(
+                        11155111,
+                        crate::ethereum::Network::new(
+                            11155111,
+                            bootstrap,
+                            crate::ethereum::consensus::Network::ethereum_sepolia(),
+                        )?,
+                    )?;
+                }
             }
 
             Ok(())

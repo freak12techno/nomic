@@ -231,6 +231,16 @@ impl Network {
             genesis_time: 1606824023,
         }
     }
+
+    pub fn ethereum_sepolia() -> Self {
+        Network {
+            genesis_vals_root: "0xd8ea171f3c94aea21ebc42a1ed61052acf3f9209c00e4efbaaddac09ed9b8078"
+                .parse()
+                .unwrap(),
+            deneb_fork_version: 4, // TODO
+            genesis_time: 1655733600,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Encode, Decode, Serialize, Deserialize)]

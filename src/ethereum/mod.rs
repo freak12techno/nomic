@@ -333,9 +333,12 @@ pub struct Network {
 
 #[orga]
 impl Network {
-    pub fn new(id: u32, bootstrap: consensus::Bootstrap) -> Result<Self> {
-        let cons_network = consensus::Network::ethereum_mainnet(); // TODO
-        let light_client = consensus::LightClient::new(bootstrap, cons_network)?;
+    pub fn new(
+        id: u32,
+        bootstrap: consensus::Bootstrap,
+        network: consensus::Network,
+    ) -> Result<Self> {
+        let light_client = consensus::LightClient::new(bootstrap, network)?;
 
         Ok(Self {
             id,
