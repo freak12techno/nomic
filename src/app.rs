@@ -970,11 +970,11 @@ mod abci {
                 if !self.bitcoin.checkpoints.is_empty()? {
                     self.ethereum
                         .step(&self.bitcoin.checkpoints.active_sigset()?)?;
-                }
 
-                let pending = &mut self.bitcoin.checkpoints.building_mut()?.pending;
-                for (dest, coins, sender) in self.ethereum.take_pending()? {
-                    pending.insert((dest, sender), coins)?;
+                    let pending = &mut self.bitcoin.checkpoints.building_mut()?.pending;
+                    for (dest, coins, sender) in self.ethereum.take_pending()? {
+                        pending.insert((dest, sender), coins)?;
+                    }
                 }
             }
 
