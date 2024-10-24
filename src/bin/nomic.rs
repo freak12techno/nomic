@@ -192,6 +192,8 @@ pub enum Command {
     RelayEthereum(RelayEthereumCmd),
     #[cfg(feature = "ethereum")]
     EthTransferNbtc(EthTransferNbtcCmd),
+    #[cfg(feature = "ethereum")]
+    GetSigsetEthAddresses(GetSigsetEthAddressesCmd),
 }
 
 impl Command {
@@ -266,6 +268,8 @@ impl Command {
                 RelayEthereum(cmd) => cmd.run().await,
                 #[cfg(feature = "ethereum")]
                 EthTransferNbtc(cmd) => cmd.run().await,
+                #[cfg(feature = "ethereum")]
+                GetSigsetEthAddresses(cmd) => cmd.run().await,
             }
         })
     }
@@ -3018,6 +3022,46 @@ impl RelayEthereumCmd {
         };
 
         futures::try_join!(relay_to_eth, relay_to_nomic)?;
+
+        Ok(())
+    }
+}
+
+#[cfg(feature = "ethereum")]
+#[derive(Parser, Debug)]
+pub struct GetSigsetEthAddressesCmd {
+    #[clap(default_value = "0")]
+    sigset_index: u32,
+
+    #[clap(flatten)]
+    config: nomic::network::Config,
+}
+
+#[cfg(feature = "ethereum")]
+impl GetSigsetEthAddressesCmd {
+    async fn run(&self) -> Result<()> {
+        let client = self.config.client();
+
+        let sigset = client
+            .query(|app| {
+                Ok(app
+                    .bitcoin
+                    .checkpoints
+                    .get(self.sigset_index)?
+                    .sigset
+                    .clone())
+            })
+            .await?;
+
+        print!("[");
+        for (i, addr) in sigset.eth_addresses().into_iter().enumerate() {
+            print!(
+                "{}{}",
+                if i > 0 { "," } else { "" },
+                hex::encode(addr.bytes()),
+            );
+        }
+        println!("]");
 
         Ok(())
     }
