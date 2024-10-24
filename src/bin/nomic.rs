@@ -2667,6 +2667,8 @@ pub struct RelayEthereumCmd {
     #[clap(long)]
     eth_rpc_url: String,
     #[clap(long)]
+    beacon_api_url: String,
+    #[clap(long)]
     eth_chainid: u32,
     #[clap(long)]
     eth_contract: String,
@@ -2786,7 +2788,7 @@ impl RelayEthereumCmd {
                 .await?;
             valset.normalize_vp(u32::MAX as u64);
 
-            let sigs = sigs
+            let sigs: Vec<_> = sigs
                 .into_iter()
                 .map(|(pk, sig)| {
                     let Some(sig) = sig else {
@@ -2962,39 +2964,39 @@ impl RelayEthereumCmd {
                 ._0;
             dbg!(&dest_str, amount, sender);
 
-            // ?: same rpc as used in provider?
-            let rpc_client = ethereum::consensus::relayer::RpcClient::new(self.eth_rpc_url.clone());
-            let chain_id = self.eth_chainid.clone();
+            let rpc_client =
+                ethereum::consensus::relayer::RpcClient::new(self.beacon_api_url.clone());
             // TODO: use chain_id in closure without breaking fn coercion
-            let lc = client.sub(|app: InnerApp| Ok(app.ethereum.light_client(11155111)?));
+            let lc = client.sub(move |app: InnerApp| Ok(app.ethereum.light_client(11155111)?));
             let updates = ethereum::consensus::relayer::get_updates(&lc, &rpc_client).await?;
-            // ?: which block height / hash to query for state proof?
-            // something from finalized_header or attested_header?
-            updates.last().unwrap().finalized_header.parent_root;
+            dbg!(updates.len());
 
-            let block_number = 123; // ?
-
-            let state_proof = ethereum::relayer::get_state_proof(
-                &provider,
-                bridge_contract_addr,
-                nomic_index,
-                block_number,
-            )
-            .await?;
-
-            client
-                .call(
-                    move |app| {
-                        build_call!(app.ethereum.relay_return(
-                            self.eth_chainid,
-                            bridge_contract,
-                            update.clone(),
-                            state_proof.clone()
-                        ))
-                    },
-                    |app| build_call!(app.app_noop()),
+            for update in updates {
+                dbg!(&update);
+                let state_proof = ethereum::relayer::get_state_proof(
+                    &provider,
+                    bridge_contract_addr,
+                    nomic_index,
+                    update.finalized_header.slot,
                 )
                 .await?;
+                dbg!(&state_proof);
+
+                self.config
+                    .client()
+                    .call(
+                        move |app| {
+                            build_call!(app.ethereum.relay_return(
+                                self.eth_chainid,
+                                bridge_contract,
+                                update.clone(),
+                                state_proof.clone()
+                            ))
+                        },
+                        |app| build_call!(app.app_noop()),
+                    )
+                    .await?;
+            }
 
             Ok::<_, nomic::error::Error>(())
         };
