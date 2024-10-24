@@ -158,6 +158,10 @@ name = "nomic"
 [[bin]]
 name = "create-checkpoint"
 
+[[bin]]
+name = "eth-bootstrap"
+required-features = ["ethereum-full"]
+
 [[test]]
 name = "bitcoin"
 required-features = ["devnet"]

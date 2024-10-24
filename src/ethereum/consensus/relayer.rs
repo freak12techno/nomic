@@ -87,6 +87,18 @@ impl RpcClient {
         Ok(res)
     }
 
+    pub async fn block_root(&self, slot: u64) -> Result<Response<Root>> {
+        let url = format!("{}/eth/v1/beacon/blocks/{}/root", self.rpc_addr, slot,);
+        let response = get(&url)
+            .await
+            .map_err(|e| orga::Error::App(e.to_string()))?;
+        let res = response
+            .json()
+            .await
+            .map_err(|e| orga::Error::App(e.to_string()))?;
+        Ok(res)
+    }
+
     pub async fn bootstrap(&self, block_root: Bytes32) -> Result<Response<Bootstrap>> {
         let url = format!(
             "{}/eth/v1/beacon/light_client/bootstrap/{}",
@@ -107,6 +119,11 @@ impl RpcClient {
 pub struct Response<T> {
     pub version: Option<String>,
     pub data: T,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Root {
+    pub root: Bytes32,
 }
 
 #[cfg(test)]
