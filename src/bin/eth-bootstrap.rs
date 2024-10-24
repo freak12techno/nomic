@@ -32,7 +32,7 @@ pub async fn main() -> Result<()> {
     log::info!("Sync period start root: {}", &root);
 
     // get bootstrap data
-    let bootstrap = client.bootstrap(root).await?;
+    let bootstrap = client.bootstrap(root).await?.data;
     log::info!("Received bootstrap data");
 
     println!("{}", serde_json::to_string_pretty(&bootstrap).unwrap());
