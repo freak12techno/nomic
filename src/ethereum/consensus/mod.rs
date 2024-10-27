@@ -414,7 +414,10 @@ impl Encode for LightClientHeader {
     }
 
     fn encoding_length(&self) -> ed::Result<usize> {
-        todo!()
+        // TODO
+        let mut vec = Vec::with_capacity(1_000);
+        self.encode_into(&mut vec)?;
+        Ok(vec.len())
     }
 }
 
@@ -423,10 +426,12 @@ pub fn encode_lc_header<W: std::io::Write>(
     dest: &mut W,
 ) -> ed::Result<()> {
     encode_bb_header(&header.beacon, dest)?;
+
     (header.execution.is_some() as u8).encode_into(dest)?;
     if let Some(HeliosExecutionPayloadHeaderOuter::Deneb(execution)) = &header.execution {
         encode_ep_header(execution, dest)?;
     }
+
     (header.execution_branch.is_some() as u8).encode_into(dest)?;
     if let Some(execution) = &header.execution_branch {
         let branch: Vec<Bytes32> = execution.iter().map(|b| b.0.into()).collect();
@@ -502,7 +507,10 @@ impl Encode for ExecutionPayloadHeader {
     }
 
     fn encoding_length(&self) -> ed::Result<usize> {
-        todo!()
+        // TODO
+        let mut vec = Vec::with_capacity(1_000);
+        self.encode_into(&mut vec)?;
+        Ok(vec.len())
     }
 }
 
@@ -520,7 +528,11 @@ fn encode_ep_header<W: std::io::Write>(
     header.gas_limit.encode_into(dest)?;
     header.gas_used.encode_into(dest)?;
     header.timestamp.encode_into(dest)?;
-    header.extra_data.inner.to_vec().encode_into(dest)?;
+    LengthVec::<u8, u8>::new(
+        header.extra_data.inner.to_vec().len() as u8,
+        header.extra_data.inner.to_vec(),
+    )
+    .encode_into(dest)?;
     header
         .base_fee_per_gas
         .to_be_bytes::<32>()
@@ -544,7 +556,7 @@ impl Decode for ExecutionPayloadHeader {
         let gas_limit = u64::decode(&mut input)?;
         let gas_used = u64::decode(&mut input)?;
         let timestamp = u64::decode(&mut input)?;
-        let extra_data = <[u8; 32]>::decode(&mut input)?;
+        let extra_data = LengthVec::<u8, u8>::decode(&mut input)?;
         let base_fee_per_gas = <[u8; 32]>::decode(&mut input)?;
         let block_hash = <[u8; 32]>::decode(&mut input)?;
         let transactions_root = <[u8; 32]>::decode(&mut input)?;

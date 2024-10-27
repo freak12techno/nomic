@@ -2972,7 +2972,7 @@ impl RelayEthereumCmd {
             dbg!(updates.len());
 
             for update in updates {
-                dbg!(&update);
+                dbg!();
                 let state_proof = ethereum::relayer::get_state_proof(
                     &provider,
                     bridge_contract_addr,
@@ -2980,7 +2980,7 @@ impl RelayEthereumCmd {
                     update.finalized_header.beacon.slot,
                 )
                 .await?;
-                dbg!(&state_proof);
+                dbg!();
 
                 self.config
                     .client()
@@ -2996,6 +2996,7 @@ impl RelayEthereumCmd {
                         |app| build_call!(app.app_noop()),
                     )
                     .await?;
+                dbg!();
             }
 
             Ok::<_, nomic::error::Error>(())
