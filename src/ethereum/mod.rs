@@ -264,10 +264,10 @@ impl Ethereum {
         Ok(self
             .networks
             .get(network)?
-            .unwrap()
+            .ok_or_else(|| Error::App("Network not found".to_string()))?
             .connections
             .get(connection)?
-            .unwrap()
+            .ok_or_else(|| Error::App("Connection not found".to_string()))?
             .token_contract)
     }
     #[query]
@@ -275,10 +275,10 @@ impl Ethereum {
         Ok(self
             .networks
             .get(network)?
-            .unwrap()
+            .ok_or_else(|| Error::App("Network not found".to_string()))?
             .connections
             .get(connection)?
-            .unwrap()
+            .ok_or_else(|| Error::App("Connection not found".to_string()))?
             .message_index)
     }
     #[query]
@@ -286,10 +286,10 @@ impl Ethereum {
         Ok(self
             .networks
             .get(network)?
-            .unwrap()
+            .ok_or_else(|| Error::App("Network not found".to_string()))?
             .connections
             .get(connection)?
-            .unwrap()
+            .ok_or_else(|| Error::App("Connection not found".to_string()))?
             .return_index)
     }
     #[query]
@@ -297,10 +297,10 @@ impl Ethereum {
         Ok(self
             .networks
             .get(network)?
-            .unwrap()
+            .ok_or_else(|| Error::App("Network not found".to_string()))?
             .connections
             .get(connection)?
-            .unwrap()
+            .ok_or_else(|| Error::App("Connection not found".to_string()))?
             .get(msg_index)?
             .sigs
             .signed())
@@ -312,8 +312,14 @@ impl Ethereum {
         connection: Address,
         msg_index: u64,
     ) -> Result<([u8; 32], Sigs, OutMessageArgs)> {
-        let net = self.networks.get(network)?.unwrap();
-        let conn = net.connections.get(connection)?.unwrap();
+        let net = self
+            .networks
+            .get(network)?
+            .ok_or_else(|| Error::App("Network not found".to_string()))?;
+        let conn = net
+            .connections
+            .get(connection)?
+            .ok_or_else(|| Error::App("Connection not found".to_string()))?;
         let msg = conn.get(msg_index)?;
         Ok((msg.sigs.message, conn.get_sigs(msg_index)?, msg.msg.clone()))
     }
