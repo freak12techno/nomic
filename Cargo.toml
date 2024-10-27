@@ -135,18 +135,18 @@ ethereum = [
     "rlp-derive",
     "trie-db",
     "ruint",
+    "helios-consensus-core",
+    "alloy-rpc-types-eth",
 ]
 ethereum-full = [
     "ethereum",
     "alloy-contract",
     "alloy-provider",
     "alloy-rpc-types",
-    "alloy-rpc-types-eth",
     "alloy-transport",
     "alloy-provider/anvil-node",
     "alloy-provider/rpc-api",
     "alloy-signer-local",
-    "helios-consensus-core",
 ]
 frost = ["frost-secp256k1-tr"]
 babylon = ["frost"]
