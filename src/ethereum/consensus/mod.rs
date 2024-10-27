@@ -47,7 +47,7 @@ impl LightClient {
         let bootstrap = bootstrap.into();
 
         let mut forks = Forks::default();
-        forks.deneb.fork_version = (network.deneb_fork_version.to_le_bytes()).into();
+        forks.deneb.fork_version = (network.deneb_fork_version.to_be_bytes()).into();
 
         verify_bootstrap(&bootstrap, bootstrap.header.beacon.tree_hash_root(), &forks)
             .map_err(|e| orga::Error::App(format!("Invalid bootstrap: {}", e.to_string())))?;
@@ -63,7 +63,7 @@ impl LightClient {
         let genesis_root = (&self.network.genesis_vals_root.0).into();
 
         let mut forks = Forks::default();
-        forks.deneb.fork_version = (&self.network.deneb_fork_version.to_le_bytes()).into();
+        forks.deneb.fork_version = (&self.network.deneb_fork_version.to_be_bytes()).into();
 
         if update.next_sync_committee.is_some() {
             let update: HeliosUpdate = update.try_into().unwrap();
@@ -262,7 +262,7 @@ impl Network {
             genesis_vals_root: "0xd8ea171f3c94aea21ebc42a1ed61052acf3f9209c00e4efbaaddac09ed9b8078"
                 .parse()
                 .unwrap(),
-            deneb_fork_version: 4, // TODO
+            deneb_fork_version: 0x90000073,
             genesis_time: 1655733600,
         }
     }
