@@ -268,7 +268,7 @@ impl Network {
     }
 }
 
-#[derive(Clone, Debug, Encode, Decode, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Update {
     pub attested_header: LightClientHeader,
     pub next_sync_committee: Option<SyncCommittee>,
@@ -279,6 +279,36 @@ pub struct Update {
     #[serde(with = "u64_string")]
     pub signature_slot: u64,
 }
+
+impl Encode for Update {
+    fn encode_into<W: std::io::Write>(&self, dest: &mut W) -> ed::Result<()> {
+        let json = serde_json::to_string(self).unwrap();
+        let len = json.len() as u32;
+        len.encode_into(dest)?;
+        dest.write_all(json.as_bytes())?;
+        Ok(())
+    }
+
+    fn encoding_length(&self) -> ed::Result<usize> {
+        let json = serde_json::to_string(self).unwrap();
+        Ok(4 + json.len())
+    }
+}
+
+impl Decode for Update {
+    fn decode<R: std::io::Read>(mut input: R) -> ed::Result<Self> {
+        let len = u32::decode(&mut input)?;
+        if len > 1_000_000 {
+            return Err(ed::Error::UnexpectedByte(100));
+        }
+        let mut buf = vec![0; len as usize];
+        input.read_exact(&mut buf)?;
+        let update: Update = serde_json::from_slice(&buf).unwrap();
+        Ok(update)
+    }
+}
+
+impl Terminated for Update {}
 
 impl TryFrom<Update> for HeliosUpdate {
     type Error = crate::error::Error;
