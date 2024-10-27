@@ -192,6 +192,10 @@ pub enum Command {
     RelayEthereum(RelayEthereumCmd),
     #[cfg(feature = "ethereum")]
     EthTransferNbtc(EthTransferNbtcCmd),
+    #[cfg(feature = "ethereum")]
+    GetSigsetEthAddresses(GetSigsetEthAddressesCmd),
+    #[cfg(feature = "ethereum")]
+    CreateEthConnection(CreateEthConnectionCmd),
 }
 
 impl Command {
@@ -266,6 +270,10 @@ impl Command {
                 RelayEthereum(cmd) => cmd.run().await,
                 #[cfg(feature = "ethereum")]
                 EthTransferNbtc(cmd) => cmd.run().await,
+                #[cfg(feature = "ethereum")]
+                GetSigsetEthAddresses(cmd) => cmd.run().await,
+                #[cfg(feature = "ethereum")]
+                CreateEthConnection(cmd) => cmd.run().await,
             }
         })
     }
@@ -2659,6 +2667,8 @@ pub struct RelayEthereumCmd {
     #[clap(long)]
     eth_rpc_url: String,
     #[clap(long)]
+    beacon_api_url: String,
+    #[clap(long)]
     eth_chainid: u32,
     #[clap(long)]
     eth_contract: String,
@@ -2778,7 +2788,7 @@ impl RelayEthereumCmd {
                 .await?;
             valset.normalize_vp(u32::MAX as u64);
 
-            let sigs = sigs
+            let sigs: Vec<_> = sigs
                 .into_iter()
                 .map(|(pk, sig)| {
                     let Some(sig) = sig else {
@@ -2954,15 +2964,48 @@ impl RelayEthereumCmd {
                 ._0;
             dbg!(&dest_str, amount, sender);
 
-            let (consensus_proof, state_proof) =
-                ethereum::relayer::get_proofs(&provider, bridge_contract_addr, nomic_index).await?;
-            client
+            let rpc_client =
+                ethereum::consensus::relayer::RpcClient::new(self.beacon_api_url.clone());
+            // TODO: use chain_id in closure without breaking fn coercion
+            let lc = client.sub(move |app: InnerApp| Ok(app.ethereum.light_client(11155111)?));
+            let updates = ethereum::consensus::relayer::get_updates(&lc, &rpc_client).await?;
+            dbg!(updates.len());
+
+            let block_number = self
+                .config
+                .client()
+                .query(|app| {
+                    Ok(app
+                        .ethereum
+                        .networks
+                        .get(self.eth_chainid)?
+                        .unwrap()
+                        .light_client
+                        .block_number())
+                })
+                .await?;
+
+            log::debug!(
+                "Getting state proof... (chainid={}, block_number={})",
+                self.eth_chainid,
+                block_number
+            );
+
+            let state_proof = ethereum::relayer::get_state_proof(
+                &provider,
+                bridge_contract_addr,
+                nomic_index,
+                block_number,
+            )
+            .await?;
+
+            self.config
+                .client()
                 .call(
                     move |app| {
                         build_call!(app.ethereum.relay_return(
                             self.eth_chainid,
                             bridge_contract,
-                            consensus_proof.clone(),
                             state_proof.clone()
                         ))
                     },
@@ -2973,7 +3016,41 @@ impl RelayEthereumCmd {
             Ok::<_, nomic::error::Error>(())
         };
 
-        let relay_to_eth = async {
+        let try_relay_consensus = || async {
+            let client = self.config.clone().client();
+
+            let rpc_client =
+                ethereum::consensus::relayer::RpcClient::new(self.beacon_api_url.clone());
+            // TODO: use chain_id in closure without breaking fn coercion
+            let lc = client.sub(move |app: InnerApp| Ok(app.ethereum.light_client(11155111)?));
+            let updates = ethereum::consensus::relayer::get_updates(&lc, &rpc_client).await?;
+            dbg!(updates.len());
+
+            for update in updates {
+                log::info!(
+                    "Relaying Ethereum consensus update... (chainid={}, slot={})",
+                    11155111, // TODO: self.eth_chainid,
+                    update.finalized_header.beacon.slot
+                );
+                self.config
+                    .client()
+                    .call(
+                        move |app| {
+                            build_call!(app
+                                .ethereum
+                                .relay_consensus_update(self.eth_chainid, update.clone()))
+                        },
+                        |app| build_call!(app.app_noop()),
+                    )
+                    .await?;
+
+                log::info!("Consensus update relayed.");
+            }
+
+            Ok::<_, nomic::error::Error>(())
+        };
+
+        let relay_msgs = async {
             loop {
                 if let Err(e) = try_relay_msg().await {
                     log::error!("Ethereum relayer error: {:?}", e);
@@ -2986,7 +3063,7 @@ impl RelayEthereumCmd {
             Ok::<_, nomic::error::Error>(())
         };
 
-        let relay_to_nomic = async {
+        let relay_returns = async {
             loop {
                 if let Err(e) = try_relay_return().await {
                     log::error!("Nomic relayer error: {:?}", e);
@@ -2999,7 +3076,109 @@ impl RelayEthereumCmd {
             Ok::<_, nomic::error::Error>(())
         };
 
-        futures::try_join!(relay_to_eth, relay_to_nomic)?;
+        let relay_consensus = async {
+            loop {
+                if let Err(e) = try_relay_consensus().await {
+                    log::error!("Nomic relayer error: {:?}", e);
+                };
+
+                tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
+            }
+
+            #[allow(unreachable_code)]
+            Ok::<_, nomic::error::Error>(())
+        };
+
+        futures::try_join!(relay_msgs, relay_returns, relay_consensus)?;
+
+        Ok(())
+    }
+}
+
+#[cfg(feature = "ethereum")]
+#[derive(Parser, Debug)]
+pub struct GetSigsetEthAddressesCmd {
+    #[clap(default_value = "0")]
+    sigset_index: u32,
+
+    #[clap(flatten)]
+    config: nomic::network::Config,
+}
+
+#[cfg(feature = "ethereum")]
+impl GetSigsetEthAddressesCmd {
+    async fn run(&self) -> Result<()> {
+        let client = self.config.client();
+
+        let sigset = client
+            .query(|app| {
+                Ok(app
+                    .bitcoin
+                    .checkpoints
+                    .get(self.sigset_index)?
+                    .sigset
+                    .clone())
+            })
+            .await?;
+
+        print!("[");
+        for (i, addr) in sigset.eth_addresses().into_iter().enumerate() {
+            print!(
+                "{}{}",
+                if i > 0 { "," } else { "" },
+                hex::encode(addr.bytes()),
+            );
+        }
+        println!("]");
+
+        Ok(())
+    }
+}
+
+#[cfg(feature = "ethereum")]
+#[derive(Parser, Debug)]
+pub struct CreateEthConnectionCmd {
+    #[clap(long)]
+    eth_chainid: u32,
+    #[clap(long)]
+    bridge_contract_addr: String,
+    #[clap(long)]
+    token_contract_addr: String,
+    #[clap(long)]
+    sigset_index: u32,
+
+    #[clap(flatten)]
+    config: nomic::network::Config,
+}
+
+#[cfg(feature = "ethereum")]
+impl CreateEthConnectionCmd {
+    async fn run(&self) -> Result<()> {
+        let client = self.config.client().with_wallet(wallet());
+
+        let bc_vec = hex::decode(&self.bridge_contract_addr).unwrap();
+        let mut bc_bytes = [0u8; 20];
+        bc_bytes.copy_from_slice(&bc_vec);
+        let bridge_contract = Address::from(bc_bytes);
+
+        let tc_vec = hex::decode(&self.token_contract_addr).unwrap();
+        let mut tc_bytes = [0u8; 20];
+        tc_bytes.copy_from_slice(&tc_vec);
+        let token_contract = Address::from(tc_bytes);
+
+        client
+            .call(
+                move |app| {
+                    build_call!(app.eth_create_connection(
+                        self.eth_chainid,
+                        bridge_contract,
+                        token_contract,
+                        self.sigset_index
+                    ))
+                },
+                |app| build_call!(app.app_noop()),
+            )
+            .await?;
 
         Ok(())
     }

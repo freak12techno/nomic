@@ -1887,8 +1887,8 @@ dependencies = [
 
 [[package]]
 name = "consensus-core"
-version = "0.6.0"
-source = "git+https://github.com/a16z/helios.git#b9bc6bf03b3f271773307210fd67ade62f719ae1"
+version = "0.6.1"
+source = "git+https://github.com/a16z/helios.git?rev=0.7.0#545d809be0f135f69a8e6f613bb6bdd0fb4b22d1"
 dependencies = [
  "alloy",
  "bls12_381",
@@ -4607,6 +4607,7 @@ dependencies = [
  "ripemd",
  "rlp",
  "rlp-derive",
+ "ruint",
  "semver 1.0.23",
  "serde",
  "serde-big-array",

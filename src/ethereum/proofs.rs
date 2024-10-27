@@ -10,7 +10,6 @@ use ethereum_triedb::{
 use orga::coins::Amount;
 use orga::encoding::LengthString;
 use orga::encoding::{Decode, Encode};
-use orga::orga;
 use orga::{coins::Address, encoding::LengthVec};
 use primitive_types::{H256, U256};
 use rlp::{Decodable as _, Rlp};
@@ -83,13 +82,9 @@ impl StateProof {
             address: Address::from(proof.address.0 .0),
             start_index,
             account_proof,
-            storage_proofs: state_proofs.try_into().map_err(|_e| {
-                Error::Relayer(
-                    "Invalid storage
-        proof"
-                        .to_string(),
-                )
-            })?,
+            storage_proofs: state_proofs
+                .try_into()
+                .map_err(|_e| Error::Relayer("Invalid storage proof".to_string()))?,
         })
     }
 
@@ -283,25 +278,4 @@ impl BridgeContractData {
 
 pub fn extra_slots_required(len: usize) -> usize {
     (len + 31) / 32
-}
-// updated header
-#[derive(Debug, Clone, Encode, Decode)]
-pub struct ConsensusProof {
-    pub state_root: [u8; 32],
-}
-
-impl ConsensusProof {
-    pub fn verify(self, prev_consensus_state: &ConsensusState) -> AppResult<ConsensusState> {
-        Ok(ConsensusState {
-            state_root: self.state_root,
-        })
-    }
-}
-
-// sync committee / next_sync_committee won't change across updates except when
-// no longer in current period
-#[orga]
-#[derive(Debug, Clone)]
-pub struct ConsensusState {
-    pub state_root: [u8; 32],
 }

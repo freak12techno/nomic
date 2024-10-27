@@ -485,18 +485,18 @@ impl InnerApp {
     ) -> Result<()> {
         let mut succeeded = false;
         let amount = coins.amount;
-        if self.validate_dest(&dest, amount, sender).is_ok() {
-            if let Err(e) = self.credit_dest(dest.clone(), coins.take(amount)?, sender) {
-                log::debug!("Error crediting transfer: {:?}", e);
-                // TODO: ensure no errors can happen after mutating
-                // state in credit_dest since state won't be reverted
+        if let Err(e) = self.validate_dest(&dest, amount, sender) {
+            log::debug!("Error validating transfer: {}", e);
+        } else if let Err(e) = self.credit_dest(dest.clone(), coins.take(amount)?, sender) {
+            log::debug!("Error crediting transfer: {:?}", e);
+            // TODO: ensure no errors can happen after mutating
+            // state in credit_dest since state won't be reverted
 
-                // Assume coins passed into credit_dest are burnt,
-                // replace them in `coins`
-                coins.give(Coin::mint(amount))?;
-            } else {
-                succeeded = true;
-            }
+            // Assume coins passed into credit_dest are burnt,
+            // replace them in `coins`
+            coins.give(Coin::mint(amount))?;
+        } else {
+            succeeded = true;
         }
 
         // Handle failures
@@ -929,6 +929,22 @@ mod abci {
                         let address = line.parse().unwrap();
                         self.accounts.deposit(address, Coin::mint(10_000_000_000))
                     })?;
+
+                #[cfg(feature = "ethereum")]
+                {
+                    // Add Ethereum Sepolia
+                    let bootstrap =
+                        serde_json::from_str(include_str!("./ethereum/bootstrap/sepolia.json"))
+                            .unwrap();
+                    self.ethereum.networks.insert(
+                        11155111,
+                        crate::ethereum::Network::new(
+                            11155111,
+                            bootstrap,
+                            crate::ethereum::consensus::Network::ethereum_sepolia(),
+                        )?,
+                    )?;
+                }
             }
 
             Ok(())
@@ -972,11 +988,11 @@ mod abci {
                 if !self.bitcoin.checkpoints.is_empty()? {
                     self.ethereum
                         .step(&self.bitcoin.checkpoints.active_sigset()?)?;
-                }
 
-                let pending = &mut self.bitcoin.checkpoints.building_mut()?.pending;
-                for (dest, coins, sender) in self.ethereum.take_pending()? {
-                    pending.insert((dest, sender), coins)?;
+                    let pending = &mut self.bitcoin.checkpoints.building_mut()?.pending;
+                    for (dest, coins, sender) in self.ethereum.take_pending()? {
+                        pending.insert((dest, sender), coins)?;
+                    }
                 }
             }
 
