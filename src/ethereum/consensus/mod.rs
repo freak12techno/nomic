@@ -10,9 +10,14 @@ use helios_consensus_core::{
     apply_bootstrap, apply_finality_update, apply_update, expected_current_slot,
     types::{
         bls::{PublicKey as HeliosPublicKey, Signature as HeliosSignature},
-        Bootstrap as HeliosBootstrap, FinalityUpdate as HeliosFinalityUpdate, Forks, GenericUpdate,
-        Header as HeliosHeader, LightClientStore, SyncAggregate as HeliosSyncAggregate,
-        SyncCommittee as HeliosSyncCommittee, Update as HeliosUpdate,
+        bytes::{ByteList, ByteVector},
+        BeaconBlockHeader as HeliosBeaconBlockHeader, Bootstrap as HeliosBootstrap,
+        ExecutionPayloadHeader as HeliosExecutionPayloadHeaderOuter,
+        ExecutionPayloadHeaderDeneb as HeliosExecutionPayloadHeader,
+        FinalityUpdate as HeliosFinalityUpdate, Forks, GenericUpdate,
+        LightClientHeader as HeliosLightClientHeader, LightClientStore,
+        SyncAggregate as HeliosSyncAggregate, SyncCommittee as HeliosSyncCommittee,
+        Update as HeliosUpdate,
     },
     verify_bootstrap, verify_finality_update, verify_update,
 };
@@ -41,7 +46,10 @@ impl LightClient {
     pub fn new(bootstrap: Bootstrap, network: Network) -> Result<Self> {
         let bootstrap = bootstrap.into();
 
-        verify_bootstrap(&bootstrap, bootstrap.header.tree_hash_root())
+        let mut forks = Forks::default();
+        forks.deneb.fork_version = (network.deneb_fork_version.to_le_bytes()).into();
+
+        verify_bootstrap(&bootstrap, bootstrap.header.beacon.tree_hash_root(), &forks)
             .map_err(|e| orga::Error::App(format!("Invalid bootstrap: {}", e.to_string())))?;
 
         let mut lcs = LightClientStore::default();
@@ -52,9 +60,10 @@ impl LightClient {
 
     pub fn update(&mut self, update: Update, now_seconds: u64) -> Result<()> {
         let expected_slot = (now_seconds - self.network.genesis_time) / 12;
+        let genesis_root = (&self.network.genesis_vals_root.0).into();
+
         let mut forks = Forks::default();
         forks.deneb.fork_version = (&self.network.deneb_fork_version.to_le_bytes()).into();
-        let genesis_root = (&self.network.genesis_vals_root.0).into();
 
         if update.next_sync_committee.is_some() {
             let update: HeliosUpdate = update.try_into().unwrap();
@@ -72,11 +81,28 @@ impl LightClient {
     }
 
     pub fn slot(&self) -> u64 {
-        self.lcs.finalized_header.slot
+        self.lcs.finalized_header.beacon.slot
+    }
+
+    pub fn block_number(&self) -> u64 {
+        *self
+            .lcs
+            .finalized_header
+            .execution
+            .as_ref()
+            .unwrap() // TODO: guarantee execution header is always present?
+            .block_number()
     }
 
     pub fn state_root(&self) -> Bytes32 {
-        self.lcs.finalized_header.state_root.0.into()
+        self.lcs
+            .finalized_header
+            .execution
+            .as_ref()
+            .unwrap() // TODO: guarantee execution header is always present?
+            .state_root()
+            .0
+            .into()
     }
 
     pub fn light_client_store(&self) -> &LightClientStore {
@@ -145,16 +171,13 @@ impl DerefMut for LightClient {
 
 impl Encode for LightClient {
     fn encode_into<W: std::io::Write>(&self, dest: &mut W) -> ed::Result<()> {
-        encode_header(&self.finalized_header, dest)?;
+        encode_lc_header(&self.finalized_header, dest)?;
         encode_sync_committee(&self.current_sync_committee, dest)?;
-        self.next_sync_committee
-            .as_ref()
-            .map(|_| ())
-            .encode_into(dest)?;
+        (self.next_sync_committee.is_some() as u8).encode_into(dest)?;
         if let Some(sc) = &self.next_sync_committee {
             encode_sync_committee(sc, dest)?;
         }
-        encode_header(&self.optimistic_header, dest)?;
+        encode_lc_header(&self.optimistic_header, dest)?;
         self.lcs
             .previous_max_active_participants
             .encode_into(dest)?;
@@ -164,30 +187,32 @@ impl Encode for LightClient {
 
     fn encoding_length(&self) -> ed::Result<usize> {
         // TODO: remove need for copying
-        Ok(Header(self.lcs.finalized_header.clone()).encoding_length()?
-            + SyncCommittee(self.lcs.current_sync_committee.clone()).encoding_length()?
-            + self
-                .lcs
-                .next_sync_committee
-                .clone()
-                .map(SyncCommittee)
-                .encoding_length()?
-            + Header(self.lcs.optimistic_header.clone()).encoding_length()?
-            + self
-                .lcs
-                .previous_max_active_participants
-                .encoding_length()?
-            + self.lcs.current_max_active_participants.encoding_length()?
-            + self.network.encoding_length()?)
+        Ok(
+            LightClientHeader(self.lcs.finalized_header.clone()).encoding_length()?
+                + SyncCommittee(self.lcs.current_sync_committee.clone()).encoding_length()?
+                + self
+                    .lcs
+                    .next_sync_committee
+                    .clone()
+                    .map(SyncCommittee)
+                    .encoding_length()?
+                + LightClientHeader(self.lcs.optimistic_header.clone()).encoding_length()?
+                + self
+                    .lcs
+                    .previous_max_active_participants
+                    .encoding_length()?
+                + self.lcs.current_max_active_participants.encoding_length()?
+                + self.network.encoding_length()?,
+        )
     }
 }
 
 impl Decode for LightClient {
     fn decode<R: std::io::Read>(mut input: R) -> ed::Result<Self> {
-        let finalized_header = Header::decode(&mut input)?;
+        let finalized_header = LightClientHeader::decode(&mut input)?;
         let current_sync_committee = SyncCommittee::decode(&mut input)?;
         let next_sync_committee = Option::<SyncCommittee>::decode(&mut input)?;
-        let optimistic_header = Header::decode(&mut input)?;
+        let optimistic_header = LightClientHeader::decode(&mut input)?;
         let previous_max_active_participants = u64::decode(&mut input)?;
         let current_max_active_participants = u64::decode(&mut input)?;
         let network = Network::decode(&mut input)?;
@@ -245,12 +270,10 @@ impl Network {
 
 #[derive(Clone, Debug, Encode, Decode, Serialize, Deserialize)]
 pub struct Update {
-    #[serde(deserialize_with = "wrapped_header::deserialize")]
-    pub attested_header: Header,
+    pub attested_header: LightClientHeader,
     pub next_sync_committee: Option<SyncCommittee>,
     pub next_sync_committee_branch: Option<LengthVec<u8, Bytes32>>,
-    #[serde(deserialize_with = "wrapped_header::deserialize")]
-    pub finalized_header: Header,
+    pub finalized_header: LightClientHeader,
     pub finality_branch: LengthVec<u8, Bytes32>,
     pub sync_aggregate: SyncAggregate,
     #[serde(with = "u64_string")]
@@ -337,39 +360,9 @@ mod u64_string {
     }
 }
 
-mod wrapped_header {
-    use super::Header;
-    use serde::{Deserialize, Deserializer};
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Header, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let header: LightClientHeader = Deserialize::deserialize(deserializer)?;
-
-        Ok(match header {
-            LightClientHeader::Unwrapped(header) => header,
-            LightClientHeader::Wrapped(header) => header.beacon,
-        })
-    }
-
-    #[derive(serde::Deserialize)]
-    #[serde(untagged)]
-    enum LightClientHeader {
-        Unwrapped(Header),
-        Wrapped(Beacon),
-    }
-
-    #[derive(serde::Deserialize)]
-    struct Beacon {
-        beacon: Header,
-    }
-}
-
 #[derive(Clone, Debug, Encode, Decode, Serialize, Deserialize)]
 pub struct Bootstrap {
-    #[serde(deserialize_with = "wrapped_header::deserialize")]
-    pub header: Header,
+    pub header: LightClientHeader,
     pub current_sync_committee: SyncCommittee,
     pub current_sync_committee_branch: LengthVec<u8, Bytes32>,
 }
@@ -393,31 +386,225 @@ impl From<Bootstrap> for HeliosBootstrap {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct Header(HeliosHeader);
+pub struct LightClientHeader(HeliosLightClientHeader);
 
-impl Header {
-    pub fn into_inner(self) -> HeliosHeader {
+impl LightClientHeader {
+    pub fn into_inner(self) -> HeliosLightClientHeader {
         self.0
     }
 }
 
-impl Deref for Header {
-    type Target = HeliosHeader;
+impl Deref for LightClientHeader {
+    type Target = HeliosLightClientHeader;
 
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-impl DerefMut for Header {
+impl DerefMut for LightClientHeader {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
 }
 
-impl Encode for Header {
+impl Encode for LightClientHeader {
     fn encode_into<W: std::io::Write>(&self, dest: &mut W) -> ed::Result<()> {
-        encode_header(&self.0, dest)
+        encode_lc_header(&self.0, dest)
+    }
+
+    fn encoding_length(&self) -> ed::Result<usize> {
+        todo!()
+    }
+}
+
+pub fn encode_lc_header<W: std::io::Write>(
+    header: &HeliosLightClientHeader,
+    dest: &mut W,
+) -> ed::Result<()> {
+    encode_bb_header(&header.beacon, dest)?;
+    (header.execution.is_some() as u8).encode_into(dest)?;
+    if let Some(HeliosExecutionPayloadHeaderOuter::Deneb(execution)) = &header.execution {
+        encode_ep_header(execution, dest)?;
+    }
+    (header.execution_branch.is_some() as u8).encode_into(dest)?;
+    if let Some(execution) = &header.execution_branch {
+        let branch: Vec<Bytes32> = execution.iter().map(|b| b.0.into()).collect();
+        if branch.len() > u8::MAX as usize {
+            return Err(ed::Error::UnexpectedByte(0));
+        }
+        let branch = LengthVec::<u8, _>::new(branch.len() as u8, branch);
+        branch.encode_into(dest)?;
+    }
+    Ok(())
+}
+
+impl Decode for LightClientHeader {
+    fn decode<R: std::io::Read>(mut input: R) -> ed::Result<Self> {
+        let beacon = BeaconBlockHeader::decode(&mut input)?;
+
+        let has_execution = u8::decode(&mut input)?;
+        let execution = if has_execution == 1 {
+            Some(ExecutionPayloadHeader::decode(&mut input)?)
+        } else {
+            None
+        };
+
+        let has_execution_branch = u8::decode(&mut input)?;
+        let execution_branch = if has_execution_branch == 1 {
+            Some(LengthVec::<u8, Bytes32>::decode(&mut input)?)
+        } else {
+            None
+        };
+
+        Ok(LightClientHeader(HeliosLightClientHeader {
+            beacon: beacon.into_inner(),
+            execution: execution.map(|e| e.into_inner().into()),
+            execution_branch: execution_branch.map(|b| {
+                Vec::from(b)
+                    .into_iter()
+                    .map(|b| b.into_inner().into())
+                    .collect()
+            }),
+        }))
+    }
+}
+
+impl Terminated for LightClientHeader {}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ExecutionPayloadHeader(HeliosExecutionPayloadHeader);
+
+impl ExecutionPayloadHeader {
+    pub fn into_inner(self) -> HeliosExecutionPayloadHeader {
+        self.0
+    }
+}
+
+impl Deref for ExecutionPayloadHeader {
+    type Target = HeliosExecutionPayloadHeader;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for ExecutionPayloadHeader {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl Encode for ExecutionPayloadHeader {
+    fn encode_into<W: std::io::Write>(&self, dest: &mut W) -> ed::Result<()> {
+        encode_ep_header(&self.0, dest)
+    }
+
+    fn encoding_length(&self) -> ed::Result<usize> {
+        todo!()
+    }
+}
+
+fn encode_ep_header<W: std::io::Write>(
+    header: &HeliosExecutionPayloadHeader,
+    dest: &mut W,
+) -> ed::Result<()> {
+    header.parent_hash.0.encode_into(dest)?;
+    header.fee_recipient.encode_into(dest)?;
+    header.state_root.0.encode_into(dest)?;
+    header.receipts_root.0.encode_into(dest)?;
+    header.logs_bloom.inner.to_vec().encode_into(dest)?;
+    header.prev_randao.0.encode_into(dest)?;
+    header.block_number.encode_into(dest)?;
+    header.gas_limit.encode_into(dest)?;
+    header.gas_used.encode_into(dest)?;
+    header.timestamp.encode_into(dest)?;
+    header.extra_data.inner.to_vec().encode_into(dest)?;
+    header
+        .base_fee_per_gas
+        .to_be_bytes::<32>()
+        .encode_into(dest)?;
+    header.block_hash.0.encode_into(dest)?;
+    header.transactions_root.0.encode_into(dest)?;
+    header.withdrawals_root.0.encode_into(dest)?;
+    header.blob_gas_used.encode_into(dest)?;
+    header.excess_blob_gas.encode_into(dest)
+}
+
+impl Decode for ExecutionPayloadHeader {
+    fn decode<R: std::io::Read>(mut input: R) -> ed::Result<Self> {
+        let parent_hash = <[u8; 32]>::decode(&mut input)?;
+        let fee_recipient = <[u8; 20]>::decode(&mut input)?;
+        let state_root = <[u8; 32]>::decode(&mut input)?;
+        let receipts_root = <[u8; 32]>::decode(&mut input)?;
+        let logs_bloom = <[u8; 256]>::decode(&mut input)?;
+        let prev_randao = <[u8; 32]>::decode(&mut input)?;
+        let block_number = u64::decode(&mut input)?;
+        let gas_limit = u64::decode(&mut input)?;
+        let gas_used = u64::decode(&mut input)?;
+        let timestamp = u64::decode(&mut input)?;
+        let extra_data = <[u8; 32]>::decode(&mut input)?;
+        let base_fee_per_gas = <[u8; 32]>::decode(&mut input)?;
+        let block_hash = <[u8; 32]>::decode(&mut input)?;
+        let transactions_root = <[u8; 32]>::decode(&mut input)?;
+        let withdrawals_root = <[u8; 32]>::decode(&mut input)?;
+        let blob_gas_used = u64::decode(&mut input)?;
+        let excess_blob_gas = u64::decode(&mut input)?;
+
+        Ok(ExecutionPayloadHeader(HeliosExecutionPayloadHeader {
+            parent_hash: parent_hash.into(),
+            fee_recipient: fee_recipient.into(),
+            state_root: state_root.into(),
+            receipts_root: receipts_root.into(),
+            logs_bloom: ByteVector {
+                inner: logs_bloom.to_vec().into(),
+            },
+            prev_randao: prev_randao.into(),
+            block_number,
+            gas_limit,
+            gas_used,
+            timestamp,
+            extra_data: ByteList {
+                inner: extra_data.to_vec().into(),
+            },
+            base_fee_per_gas: ruint::Uint::from_be_bytes(base_fee_per_gas),
+            block_hash: block_hash.into(),
+            transactions_root: transactions_root.into(),
+            withdrawals_root: withdrawals_root.into(),
+            blob_gas_used,
+            excess_blob_gas,
+        }))
+    }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct BeaconBlockHeader(HeliosBeaconBlockHeader);
+
+impl BeaconBlockHeader {
+    pub fn into_inner(self) -> HeliosBeaconBlockHeader {
+        self.0
+    }
+}
+
+impl Deref for BeaconBlockHeader {
+    type Target = HeliosBeaconBlockHeader;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for BeaconBlockHeader {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl Encode for BeaconBlockHeader {
+    fn encode_into<W: std::io::Write>(&self, dest: &mut W) -> ed::Result<()> {
+        encode_bb_header(&self.0, dest)
     }
 
     fn encoding_length(&self) -> ed::Result<usize> {
@@ -425,7 +612,10 @@ impl Encode for Header {
     }
 }
 
-pub fn encode_header<W: std::io::Write>(header: &HeliosHeader, dest: &mut W) -> ed::Result<()> {
+pub fn encode_bb_header<W: std::io::Write>(
+    header: &HeliosBeaconBlockHeader,
+    dest: &mut W,
+) -> ed::Result<()> {
     header.slot.encode_into(dest)?;
     header.proposer_index.encode_into(dest)?;
     header.parent_root.0.encode_into(dest)?;
@@ -433,7 +623,7 @@ pub fn encode_header<W: std::io::Write>(header: &HeliosHeader, dest: &mut W) -> 
     header.body_root.0.encode_into(dest)
 }
 
-impl Decode for Header {
+impl Decode for BeaconBlockHeader {
     fn decode<R: std::io::Read>(mut input: R) -> ed::Result<Self> {
         let slot = u64::decode(&mut input)?;
         let proposer_index = u64::decode(&mut input)?;
@@ -441,7 +631,7 @@ impl Decode for Header {
         let state_root = <[u8; 32]>::decode(&mut input)?;
         let body_root = <[u8; 32]>::decode(&mut input)?;
 
-        Ok(Header(HeliosHeader {
+        Ok(BeaconBlockHeader(HeliosBeaconBlockHeader {
             slot,
             proposer_index,
             parent_root: parent_root.into(),
@@ -451,7 +641,7 @@ impl Decode for Header {
     }
 }
 
-impl Terminated for Header {}
+impl Terminated for BeaconBlockHeader {}
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(transparent)]

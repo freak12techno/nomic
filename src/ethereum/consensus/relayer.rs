@@ -4,12 +4,12 @@ use reqwest::get;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    encode_sync_aggregate, Bootstrap, Bytes32, Header, LightClient, SyncAggregate, SyncCommittee,
-    Update,
+    encode_sync_aggregate, Bootstrap, Bytes32, LightClient, LightClientHeader, SyncAggregate,
+    SyncCommittee, Update,
 };
 use crate::{app, error::Result};
 
-use super::{encode_header, encode_sync_committee};
+use super::{encode_lc_header, encode_sync_committee};
 
 pub async fn get_updates<C: OrgaClient<LightClient>>(
     app_client: &C,
@@ -20,7 +20,7 @@ pub async fn get_updates<C: OrgaClient<LightClient>>(
     let finality_update = eth_client.get_finality_update().await?.data;
 
     let app_epoch = lc.slot() / 32;
-    let eth_epoch = finality_update.finalized_header.slot / 32;
+    let eth_epoch = finality_update.finalized_header.beacon.slot / 32;
 
     let app_period = app_epoch / 256;
     let eth_period = eth_epoch / 256;

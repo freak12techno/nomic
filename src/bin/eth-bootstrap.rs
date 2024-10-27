@@ -22,7 +22,7 @@ pub async fn main() -> Result<()> {
 
     // get recent block
     let update = client.get_finality_update().await?;
-    let current_slot = update.data.finalized_header.slot;
+    let current_slot = update.data.finalized_header.beacon.slot;
     log::info!("Current slot: {}", current_slot);
 
     // get root of start of sync period

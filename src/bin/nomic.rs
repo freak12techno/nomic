@@ -2977,7 +2977,7 @@ impl RelayEthereumCmd {
                     &provider,
                     bridge_contract_addr,
                     nomic_index,
-                    update.finalized_header.slot,
+                    update.finalized_header.beacon.slot,
                 )
                 .await?;
                 dbg!(&state_proof);
