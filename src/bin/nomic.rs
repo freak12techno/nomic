@@ -2971,31 +2971,6 @@ impl RelayEthereumCmd {
             let updates = ethereum::consensus::relayer::get_updates(&lc, &rpc_client).await?;
             dbg!(updates.len());
 
-            for update in updates {
-                dbg!();
-                let state_proof = ethereum::relayer::get_state_proof(
-                    &provider,
-                    bridge_contract_addr,
-                    nomic_index,
-                    update.finalized_header.beacon.slot,
-                )
-                .await?;
-                dbg!();
-
-                self.config
-                    .client()
-                    .call(
-                        move |app| {
-                            build_call!(app
-                                .ethereum
-                                .relay_consensus_update(self.eth_chainid, update.clone()))
-                        },
-                        |app| build_call!(app.app_noop()),
-                    )
-                    .await?;
-                dbg!();
-            }
-
             let block_number = self
                 .config
                 .client()
@@ -3010,6 +2985,12 @@ impl RelayEthereumCmd {
                 })
                 .await?;
 
+            log::debug!(
+                "Getting state proof... (chainid={}, block_number={})",
+                self.eth_chainid,
+                block_number
+            );
+
             let state_proof = ethereum::relayer::get_state_proof(
                 &provider,
                 bridge_contract_addr,
@@ -3017,7 +2998,6 @@ impl RelayEthereumCmd {
                 block_number,
             )
             .await?;
-            dbg!(&state_proof);
 
             self.config
                 .client()
@@ -3036,7 +3016,41 @@ impl RelayEthereumCmd {
             Ok::<_, nomic::error::Error>(())
         };
 
-        let relay_to_eth = async {
+        let try_relay_consensus = || async {
+            let client = self.config.clone().client();
+
+            let rpc_client =
+                ethereum::consensus::relayer::RpcClient::new(self.beacon_api_url.clone());
+            // TODO: use chain_id in closure without breaking fn coercion
+            let lc = client.sub(move |app: InnerApp| Ok(app.ethereum.light_client(11155111)?));
+            let updates = ethereum::consensus::relayer::get_updates(&lc, &rpc_client).await?;
+            dbg!(updates.len());
+
+            for update in updates {
+                log::info!(
+                    "Relaying Ethereum consensus update... (chainid={}, slot={})",
+                    11155111, // TODO: self.eth_chainid,
+                    update.finalized_header.beacon.slot
+                );
+                self.config
+                    .client()
+                    .call(
+                        move |app| {
+                            build_call!(app
+                                .ethereum
+                                .relay_consensus_update(self.eth_chainid, update.clone()))
+                        },
+                        |app| build_call!(app.app_noop()),
+                    )
+                    .await?;
+
+                log::info!("Consensus update relayed.");
+            }
+
+            Ok::<_, nomic::error::Error>(())
+        };
+
+        let relay_msgs = async {
             loop {
                 if let Err(e) = try_relay_msg().await {
                     log::error!("Ethereum relayer error: {:?}", e);
@@ -3049,7 +3063,7 @@ impl RelayEthereumCmd {
             Ok::<_, nomic::error::Error>(())
         };
 
-        let relay_to_nomic = async {
+        let relay_returns = async {
             loop {
                 if let Err(e) = try_relay_return().await {
                     log::error!("Nomic relayer error: {:?}", e);
@@ -3062,7 +3076,20 @@ impl RelayEthereumCmd {
             Ok::<_, nomic::error::Error>(())
         };
 
-        futures::try_join!(relay_to_eth, relay_to_nomic)?;
+        let relay_consensus = async {
+            loop {
+                if let Err(e) = try_relay_consensus().await {
+                    log::error!("Nomic relayer error: {:?}", e);
+                };
+
+                tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
+            }
+
+            #[allow(unreachable_code)]
+            Ok::<_, nomic::error::Error>(())
+        };
+
+        futures::try_join!(relay_msgs, relay_returns, relay_consensus)?;
 
         Ok(())
     }
