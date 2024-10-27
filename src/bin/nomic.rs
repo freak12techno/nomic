@@ -2986,18 +2986,38 @@ impl RelayEthereumCmd {
                     .client()
                     .call(
                         move |app| {
-                            build_call!(app.ethereum.relay_return(
-                                self.eth_chainid,
-                                bridge_contract,
-                                update.clone(),
-                                state_proof.clone()
-                            ))
+                            build_call!(app
+                                .ethereum
+                                .relay_consensus_update(self.eth_chainid, update.clone(),))
                         },
                         |app| build_call!(app.app_noop()),
                     )
                     .await?;
                 dbg!();
             }
+
+            let state_proof = ethereum::relayer::get_state_proof(
+                &provider,
+                bridge_contract_addr,
+                nomic_index,
+                block_number,
+            )
+            .await?;
+            dbg!(&state_proof);
+
+            self.config
+                .client()
+                .call(
+                    move |app| {
+                        build_call!(app.ethereum.relay_return(
+                            self.eth_chainid,
+                            bridge_contract,
+                            state_proof.clone()
+                        ))
+                    },
+                    |app| build_call!(app.app_noop()),
+                )
+                .await?;
 
             Ok::<_, nomic::error::Error>(())
         };

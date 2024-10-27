@@ -116,11 +116,27 @@ impl Ethereum {
     }
 
     #[call]
+    pub fn relay_consensus_update(
+        &mut self,
+        network: u32,
+        update: consensus::Update,
+    ) -> Result<()> {
+        exempt_from_fee()?;
+        let now_seconds = self.now()? as u64;
+
+        let mut net = self
+            .networks
+            .get_mut(network)?
+            .ok_or_else(|| Error::App("network not found".to_string()))?;
+
+        net.light_client.update(update, now_seconds)
+    }
+
+    #[call]
     pub fn relay_return(
         &mut self,
         network: u32,
         connection: Address,
-        consensus_proof: consensus::Update,
         state_proof: StateProof,
     ) -> Result<()> {
         exempt_from_fee()?;
@@ -131,7 +147,6 @@ impl Ethereum {
             .get_mut(network)?
             .ok_or_else(|| Error::App("network not found".to_string()))?;
 
-        net.update_consensus_state(consensus_proof, now_seconds)?;
         let state_root = net.light_client.state_root().0;
 
         let mut conn = net
@@ -139,7 +154,6 @@ impl Ethereum {
             .get_mut(connection)?
             .ok_or_else(|| Error::App("connection not found".to_string()))?;
 
-        let consensus_state: ConsensusState = todo!();
         conn.relay_return(network, state_root, state_proof)
     }
 
@@ -387,18 +401,6 @@ impl Network {
             .connections
             .get_mut(connection)?
             .ok_or_else(|| Error::App("Unknown connection".to_string()))?)
-    }
-
-    pub fn update_consensus_state(
-        &mut self,
-        consensus_proof: consensus::Update,
-        now_seconds: u64,
-    ) -> Result<()> {
-        // self.consensus_state =
-        // consensus_proof.verify(&self.consensus_state)?;
-        self.light_client.update(consensus_proof, now_seconds)?;
-
-        Ok(())
     }
 }
 
