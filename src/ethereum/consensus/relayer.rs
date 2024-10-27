@@ -1,15 +1,9 @@
-use ed::{Decode, Encode};
-use orga::{client::Client as OrgaClient, encoding::LengthVec};
+use orga::client::Client as OrgaClient;
 use reqwest::get;
 use serde::{Deserialize, Serialize};
 
-use super::{
-    encode_sync_aggregate, Bootstrap, Bytes32, LightClient, LightClientHeader, SyncAggregate,
-    SyncCommittee, Update,
-};
-use crate::{app, error::Result};
-
-use super::{encode_lc_header, encode_sync_committee};
+use super::{Bootstrap, Bytes32, LightClient, Update};
+use crate::error::Result;
 
 pub async fn get_updates<C: OrgaClient<LightClient>>(
     app_client: &C,

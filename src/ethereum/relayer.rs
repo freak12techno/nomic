@@ -1,11 +1,9 @@
-use super::consensus;
-use super::proofs::{BridgeContractData, ConsensusProof, StateProof};
+use super::proofs::{BridgeContractData, StateProof};
 use crate::error::Result as AppResult;
 use crate::ethereum::proofs::extra_slots_required;
 use alloy_core::primitives::Address as EthAddress;
 use alloy_primitives::Uint;
 use alloy_provider::Provider;
-use alloy_rpc_types::BlockId;
 use alloy_transport::Transport;
 
 pub async fn get_state_proof<
@@ -17,12 +15,6 @@ pub async fn get_state_proof<
     index: u64,
     block_number: u64,
 ) -> AppResult<StateProof> {
-    let block = provider
-        .get_block_by_number(block_number.into(), true)
-        .await
-        .map_err(|e| crate::error::Error::Relayer(e.to_string()))?
-        .unwrap();
-
     let contract = super::bridge_contract::new(address, provider.clone());
     let contract_index: u64 = contract
         .state_lastReturnNonce()

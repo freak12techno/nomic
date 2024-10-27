@@ -10,14 +10,11 @@ use ethereum_triedb::{
 use orga::coins::Amount;
 use orga::encoding::LengthString;
 use orga::encoding::{Decode, Encode};
-use orga::orga;
 use orga::{coins::Address, encoding::LengthVec};
 use primitive_types::{H256, U256};
 use rlp::{Decodable as _, Rlp};
 use rlp_derive::RlpDecodable;
 use trie_db::{Trie, TrieDBBuilder};
-
-use super::consensus;
 
 #[derive(RlpDecodable, Debug)]
 struct Account {
@@ -281,17 +278,4 @@ impl BridgeContractData {
 
 pub fn extra_slots_required(len: usize) -> usize {
     (len + 31) / 32
-}
-// updated header
-#[derive(Debug, Clone, Encode, Decode)]
-pub struct ConsensusProof {
-    pub updates: LengthVec<u16, consensus::Update>,
-}
-
-// sync committee / next_sync_committee won't change across updates except when
-// no longer in current period
-#[orga]
-#[derive(Debug, Clone)]
-pub struct ConsensusState {
-    pub state_root: [u8; 32],
 }

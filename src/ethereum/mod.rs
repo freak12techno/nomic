@@ -9,9 +9,8 @@ use bitcoin::secp256k1::{
 use bitcoin::Script;
 use consensus::LightClient;
 use orga::{context::GetContext as _, plugins::Time, query::MethodQuery};
-use proofs::{BridgeContractData, ConsensusState, StateProof};
+use proofs::{BridgeContractData, StateProof};
 use std::collections::BTreeSet;
-use std::u64;
 
 use ed::{Decode, Encode};
 use orga::{
@@ -26,7 +25,7 @@ use orga::{
     store::Store,
     Error,
 };
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_hex::{SerHex, StrictPfx};
 
 use crate::app::Identity;
@@ -140,7 +139,6 @@ impl Ethereum {
         state_proof: StateProof,
     ) -> Result<()> {
         exempt_from_fee()?;
-        let now_seconds = self.now()? as u64;
 
         let mut net = self
             .networks
@@ -648,7 +646,7 @@ impl Connection {
                 Ok(dest) => self.pending.push_back((dest, coins, sender_id))?,
                 Err(e) => {
                     log::debug!("failed to parse dest: {}, {}", dest.as_str(), e);
-                    self.transfer(sender.into(), coins)?;
+                    self.transfer(sender, coins)?;
                 }
             }
             self.return_index += 1;
@@ -733,11 +731,12 @@ impl Connection {
             OutMessageArgs::ContractCall {
                 contract_address,
                 data,
-                max_gas,
-                fallback_address,
                 transfer_amount,
                 fee_amount,
                 message_index,
+                // max_gas,          TODO: include in hash
+                // fallback_address, TODO: include in hash
+                ..
             } => call_hash(
                 self.chain_id,
                 self.bridge_contract.into(),
@@ -855,6 +854,7 @@ impl Describe for OutMessageArgs {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn call_hash(
     chain_id: u32,
     bridge_contract: [u8; 20],

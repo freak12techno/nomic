@@ -4,17 +4,16 @@ use std::{
     str::FromStr,
 };
 
-use bitcoin::{consensus::encode, network};
 use ed::{Decode, Encode, Terminated};
 use helios_consensus_core::{
-    apply_bootstrap, apply_finality_update, apply_update, expected_current_slot,
+    apply_bootstrap, apply_finality_update, apply_update,
     types::{
         bls::{PublicKey as HeliosPublicKey, Signature as HeliosSignature},
         bytes::{ByteList, ByteVector},
         BeaconBlockHeader as HeliosBeaconBlockHeader, Bootstrap as HeliosBootstrap,
         ExecutionPayloadHeader as HeliosExecutionPayloadHeaderOuter,
         ExecutionPayloadHeaderDeneb as HeliosExecutionPayloadHeader,
-        FinalityUpdate as HeliosFinalityUpdate, Forks, GenericUpdate,
+        FinalityUpdate as HeliosFinalityUpdate, Forks,
         LightClientHeader as HeliosLightClientHeader, LightClientStore,
         SyncAggregate as HeliosSyncAggregate, SyncCommittee as HeliosSyncCommittee,
         Update as HeliosUpdate,
@@ -22,8 +21,8 @@ use helios_consensus_core::{
     verify_bootstrap, verify_finality_update, verify_update,
 };
 use orga::{
-    call::FieldCall, describe::Describe, encoding::LengthVec, migrate::Migrate, orga,
-    query::FieldQuery, state::State,
+    call::FieldCall, describe::Describe, encoding::LengthVec, migrate::Migrate, query::FieldQuery,
+    state::State,
 };
 use serde::{Deserialize, Serialize};
 use serde_hex::{SerHex, StrictPfx};
@@ -50,7 +49,7 @@ impl LightClient {
         forks.deneb.fork_version = (network.deneb_fork_version.to_be_bytes()).into();
 
         verify_bootstrap(&bootstrap, bootstrap.header.beacon.tree_hash_root(), &forks)
-            .map_err(|e| orga::Error::App(format!("Invalid bootstrap: {}", e.to_string())))?;
+            .map_err(|e| orga::Error::App(format!("Invalid bootstrap: {}", e)))?;
 
         let mut lcs = LightClientStore::default();
         apply_bootstrap(&mut lcs, &bootstrap);
@@ -68,12 +67,12 @@ impl LightClient {
         if update.next_sync_committee.is_some() {
             let update: HeliosUpdate = update.try_into().unwrap();
             verify_update(&update, expected_slot, &self.lcs, genesis_root, &forks)
-                .map_err(|e| orga::Error::App(format!("Invalid update: {}", e.to_string())))?;
+                .map_err(|e| orga::Error::App(format!("Invalid update: {}", e)))?;
             apply_update(&mut self.lcs, &update);
         } else {
             let update: HeliosFinalityUpdate = update.into();
             verify_finality_update(&update, expected_slot, &self.lcs, genesis_root, &forks)
-                .map_err(|e| orga::Error::App(format!("Invalid update: {}", e.to_string())))?;
+                .map_err(|e| orga::Error::App(format!("Invalid update: {}", e)))?;
             apply_finality_update(&mut self.lcs, &update);
         }
 
@@ -124,7 +123,7 @@ impl State for LightClient {
         Ok(self.encode_into(out)?)
     }
 
-    fn load(store: orga::prelude::Store, bytes: &mut &[u8]) -> orga::Result<Self> {
+    fn load(_store: orga::prelude::Store, bytes: &mut &[u8]) -> orga::Result<Self> {
         Ok(Self::decode(bytes)?)
     }
 }
@@ -142,7 +141,7 @@ impl Migrate for LightClient {
 impl FieldCall for LightClient {
     type FieldCall = ();
 
-    fn field_call(&mut self, call: ()) -> orga::Result<()> {
+    fn field_call(&mut self, _call: ()) -> orga::Result<()> {
         Err(orga::Error::App("FieldCall not supported".to_string()))
     }
 }
@@ -150,7 +149,7 @@ impl FieldCall for LightClient {
 impl FieldQuery for LightClient {
     type FieldQuery = ();
 
-    fn field_query(&self, query: ()) -> orga::Result<()> {
+    fn field_query(&self, _query: ()) -> orga::Result<()> {
         Err(orga::Error::App("FieldQuery not supported".to_string()))
     }
 }
@@ -732,7 +731,7 @@ pub fn encode_sync_committee<W: std::io::Write>(
 impl Decode for SyncCommittee {
     fn decode<R: std::io::Read>(mut input: R) -> ed::Result<Self> {
         let mut pubkeys = Vec::with_capacity(512);
-        for i in 0..512 {
+        for _ in 0..512 {
             pubkeys.push(PublicKey::decode(&mut input)?.into_inner());
         }
         let aggregate_pubkey = PublicKey::decode(&mut input)?.into_inner();
@@ -796,7 +795,7 @@ impl Decode for SyncAggregate {
         Ok(SyncAggregate(HeliosSyncAggregate {
             sync_committee_bits: Bitfield::from_ssz_bytes(&sync_committee_bits)
                 // TODO: pass through error
-                .map_err(|e| ed::Error::UnexpectedByte(34))?,
+                .map_err(|_| ed::Error::UnexpectedByte(34))?,
             sync_committee_signature,
         }))
     }
@@ -859,7 +858,7 @@ impl Decode for PublicKey {
         input.read_exact(&mut bytes)?;
         // TODO: pass through error
         let value =
-            HeliosPublicKey::from_ssz_bytes(&bytes).map_err(|e| ed::Error::UnexpectedByte(33))?;
+            HeliosPublicKey::from_ssz_bytes(&bytes).map_err(|_| ed::Error::UnexpectedByte(33))?;
         Ok(PublicKey(value))
     }
 }
@@ -921,7 +920,8 @@ impl Decode for Signature {
         input.read_exact(&mut bytes)?;
         // TODO: pass through error
         let value =
-            HeliosSignature::from_ssz_bytes(&bytes).map_err(|e| ed::Error::UnexpectedByte(33))?;
+            HeliosSignature::from_ssz_bytes(&bytes).map_err(|_| ed::Error::UnexpectedByte(33))?;
+
         Ok(Signature(value))
     }
 }
@@ -946,7 +946,7 @@ impl From<[u8; 32]> for Bytes32 {
 
 impl Display for Bytes32 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "0x{}", hex::encode(&self.0))
+        write!(f, "0x{}", hex::encode(self.0))
     }
 }
 

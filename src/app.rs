@@ -487,18 +487,16 @@ impl InnerApp {
         let amount = coins.amount;
         if let Err(e) = self.validate_dest(&dest, amount, sender) {
             log::debug!("Error validating transfer: {}", e);
-        } else {
-            if let Err(e) = self.credit_dest(dest.clone(), coins.take(amount)?, sender) {
-                log::debug!("Error crediting transfer: {:?}", e);
-                // TODO: ensure no errors can happen after mutating
-                // state in credit_dest since state won't be reverted
+        } else if let Err(e) = self.credit_dest(dest.clone(), coins.take(amount)?, sender) {
+            log::debug!("Error crediting transfer: {:?}", e);
+            // TODO: ensure no errors can happen after mutating
+            // state in credit_dest since state won't be reverted
 
-                // Assume coins passed into credit_dest are burnt,
-                // replace them in `coins`
-                coins.give(Coin::mint(amount))?;
-            } else {
-                succeeded = true;
-            }
+            // Assume coins passed into credit_dest are burnt,
+            // replace them in `coins`
+            coins.give(Coin::mint(amount))?;
+        } else {
+            succeeded = true;
         }
 
         // Handle failures
