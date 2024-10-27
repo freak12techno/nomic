@@ -2988,13 +2988,27 @@ impl RelayEthereumCmd {
                         move |app| {
                             build_call!(app
                                 .ethereum
-                                .relay_consensus_update(self.eth_chainid, update.clone(),))
+                                .relay_consensus_update(self.eth_chainid, update.clone()))
                         },
                         |app| build_call!(app.app_noop()),
                     )
                     .await?;
                 dbg!();
             }
+
+            let block_number = self
+                .config
+                .client()
+                .query(|app| {
+                    Ok(app
+                        .ethereum
+                        .networks
+                        .get(self.eth_chainid)?
+                        .unwrap()
+                        .light_client
+                        .block_number())
+                })
+                .await?;
 
             let state_proof = ethereum::relayer::get_state_proof(
                 &provider,
