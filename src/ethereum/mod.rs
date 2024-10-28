@@ -321,6 +321,15 @@ impl Ethereum {
         let msg = conn.get(msg_index)?;
         Ok((msg.sigs.message, conn.get_sigs(msg_index)?, msg.msg.clone()))
     }
+    #[query]
+    pub fn block_number(&self, network: u32) -> Result<u64> {
+        Ok(self
+            .networks
+            .get(network)?
+            .ok_or_else(|| Error::App("Network not found".to_string()))?
+            .light_client
+            .block_number())
+    }
 
     #[query]
     pub fn light_client(&self, chain_id: u32) -> Result<LightClient> {

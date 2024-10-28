@@ -2964,25 +2964,10 @@ impl RelayEthereumCmd {
                 ._0;
             dbg!(&dest_str, amount, sender);
 
-            let rpc_client =
-                ethereum::consensus::relayer::RpcClient::new(self.beacon_api_url.clone());
-            // TODO: use chain_id in closure without breaking fn coercion
-            let lc = client.sub(move |app: InnerApp| Ok(app.ethereum.light_client(11155111)?));
-            let updates = ethereum::consensus::relayer::get_updates(&lc, &rpc_client).await?;
-            dbg!(updates.len());
-
             let block_number = self
                 .config
                 .client()
-                .query(|app| {
-                    Ok(app
-                        .ethereum
-                        .networks
-                        .get(self.eth_chainid)?
-                        .unwrap()
-                        .light_client
-                        .block_number())
-                })
+                .query(|app| Ok(app.ethereum.block_number(self.eth_chainid)?))
                 .await?;
 
             log::debug!(
