@@ -1,6 +1,3 @@
-#![warn(missing_docs)]
-#![warn(clippy::missing_docs_in_private_items)]
-
 use alloy_core::{
     primitives::keccak256,
     sol_types::{sol, SolValue},
