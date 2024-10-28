@@ -16,6 +16,7 @@ use rlp::{Decodable as _, Rlp};
 use rlp_derive::RlpDecodable;
 use trie_db::{Trie, TrieDBBuilder};
 
+/// Account data from the Ethereum trie.
 #[derive(RlpDecodable, Debug)]
 struct Account {
     _nonce: u64,
@@ -41,6 +42,8 @@ pub struct StateProof {
 }
 
 impl StateProof {
+    /// Creates a new `StateProof` from the given account proof and list of dest
+    /// strings.
     pub fn from_response(
         proof: EIP1186AccountProofResponse,
         dests: Vec<(String, u64)>,
@@ -91,6 +94,8 @@ impl StateProof {
         })
     }
 
+    /// Verifies the proof against the given state root and returns the decoded
+    /// data.
     pub fn verify(self, state_root: [u8; 32]) -> AppResult<Vec<BridgeContractData>> {
         let result = verify_key(
             state_root,
@@ -218,10 +223,15 @@ pub struct BridgeContractData {
 }
 
 impl BridgeContractData {
+    /// Slot in the trie for the dest strings of the return message queue.
     pub const RETURN_DESTS_SLOT: u64 = 7;
+    /// Slot in the trie for the fund amounts of the return message queue.
     pub const RETURN_AMOUNTS_SLOT: u64 = 8;
+    /// Slot in the trie for the sender addresses of the return message queue.
     pub const RETURN_SENDERS_SLOT: u64 = 9;
 
+    /// Returns the trie keys for the given dest string at the given return
+    /// queue index.
     pub fn dest_keys(value: &str, index: u64) -> Vec<[u8; 32]> {
         let num_keys = 1 + (value.len() + 31) / 32;
 
@@ -242,21 +252,29 @@ impl BridgeContractData {
         res
     }
 
+    /// Returns the trie key for the head of the dest string at the given return
+    /// queue index.
     pub fn dest_key(index: u64) -> [u8; 32] {
         let index = U256::from(index);
         Self::get_key(index, Self::RETURN_DESTS_SLOT.into())
     }
 
+    /// Returns the trie key for the sender address at the given return queue
+    /// index.
     pub fn sender_key(index: u64) -> [u8; 32] {
         let index = U256::from(index);
         Self::get_key(index, Self::RETURN_SENDERS_SLOT.into())
     }
 
+    /// Returns the trie key for the fund amount at the given return queue
+    /// index.
     pub fn amount_key(index: u64) -> [u8; 32] {
         let index = U256::from(index);
         Self::get_key(index, Self::RETURN_AMOUNTS_SLOT.into())
     }
 
+    /// Returns the trie key for the chunk of the dest string at the given
+    /// return queue index.
     pub fn dest_chunk_key(index: u64, chunk_index: u64) -> [u8; 32] {
         let slot_key = Self::dest_key(index);
         let chunk_base = keccak_256(slot_key.as_slice());
@@ -268,6 +286,7 @@ impl BridgeContractData {
         key_bytes
     }
 
+    /// Returns the trie key for the given index and slot.
     fn get_key(index: U256, slot: U256) -> [u8; 32] {
         let mut index_bytes = [0u8; 32];
         index.to_big_endian(&mut index_bytes);
@@ -278,6 +297,11 @@ impl BridgeContractData {
     }
 }
 
+/// Returns the number of extra 32-byte slots required to store the given length
+/// of string data.
+///
+/// Strings less than 32 bytes can be stored inline in one slot, while longer
+/// strings are chunked across additional slots.
 pub fn extra_slots_required(len: usize) -> usize {
     (len + 31) / 32
 }

@@ -5,6 +5,16 @@ use serde::{Deserialize, Serialize};
 use super::{Bootstrap, Bytes32, LightClient, Update};
 use crate::error::Result;
 
+/// Based on the current Nomic state machine state, get the updates needed to
+/// bring the light client up to date with the Ethereum chain.
+///
+/// This may include any number of updates that advance the light client to the
+/// next light client period (256 epochs) and a finality update that advances
+/// the light client to the most recently finalized slot within the current
+/// period.
+///
+/// If the light client is already up to date, this function will return an
+/// empty vector.
 pub async fn get_updates<C: OrgaClient<LightClient>>(
     app_client: &C,
     eth_client: &RpcClient,
@@ -38,15 +48,19 @@ pub async fn get_updates<C: OrgaClient<LightClient>>(
     Ok(updates)
 }
 
+/// A client for the Ethereum Beacon API.
 pub struct RpcClient {
     rpc_addr: String,
 }
 
 impl RpcClient {
+    /// Create a new client to the Beacon API server with the given address.
     pub fn new(rpc_addr: String) -> Self {
         Self { rpc_addr }
     }
 
+    /// Get the updates, if any, to advance the light client from the given
+    /// start period to the current period, up to the given count.
     pub async fn get_updates(
         &self,
         start_period: u64,
@@ -66,6 +80,7 @@ impl RpcClient {
         Ok(res)
     }
 
+    /// Get the most recent finality update.
     pub async fn get_finality_update(&self) -> Result<Response<Update>> {
         let url = format!(
             "{}/eth/v1/beacon/light_client/finality_update",
@@ -81,6 +96,7 @@ impl RpcClient {
         Ok(res)
     }
 
+    /// Get the block root for the given slot.
     pub async fn block_root(&self, slot: u64) -> Result<Response<Root>> {
         let url = format!("{}/eth/v1/beacon/blocks/{}/root", self.rpc_addr, slot,);
         let response = get(&url)
@@ -93,6 +109,7 @@ impl RpcClient {
         Ok(res)
     }
 
+    /// Get the bootstrap data for the given block root.
     pub async fn bootstrap(&self, block_root: Bytes32) -> Result<Response<Bootstrap>> {
         let url = format!(
             "{}/eth/v1/beacon/light_client/bootstrap/{}",
@@ -109,12 +126,14 @@ impl RpcClient {
     }
 }
 
+/// A response from the Beacon API.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Response<T> {
     pub version: Option<String>,
     pub data: T,
 }
 
+/// A response containing a block root.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Root {
     pub root: Bytes32,
