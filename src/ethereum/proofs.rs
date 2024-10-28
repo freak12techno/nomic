@@ -24,7 +24,6 @@ struct Account {
     _code_hash: H256,
 }
 
-// TODO: remove unwraps
 // TODO: change error variants
 
 /// Encoded raw merkle trie nodes
@@ -75,7 +74,11 @@ impl StateProof {
                 state_proof_for_index.push(storage_proof);
             }
 
-            state_proofs.push(state_proof_for_index.try_into().unwrap());
+            state_proofs.push(
+                state_proof_for_index
+                    .try_into()
+                    .map_err(|_e| Error::Relayer("Invalid storage proof".to_string()))?,
+            );
         }
 
         Ok(Self {
@@ -93,8 +96,7 @@ impl StateProof {
             state_root,
             keccak_256(self.address.bytes().as_slice()).as_slice(),
             &self.account_proof,
-        )
-        .unwrap();
+        )?;
         let account = Account::decode(&Rlp::new(&result))
             .map_err(|e| Error::Relayer(format!("Failed to decode account: {}", e)))?;
 
@@ -114,31 +116,36 @@ impl StateProof {
                 root,
                 keccak_256(dest_key.as_slice()).as_slice(),
                 &storage_proof[0],
-            )
-            .unwrap();
-            dbg!(&dest_bytes);
+            )?;
+
             let amount_bytes = verify_key(
                 root,
                 keccak_256(amount_key.as_slice()).as_slice(),
                 &storage_proof[1],
-            )
-            .unwrap();
+            )?;
 
-            let sender_bytes = verify_key(root, sender_key.as_slice(), &storage_proof[2])?;
+            let sender_bytes = verify_key(
+                root,
+                keccak_256(sender_key.as_slice()).as_slice(),
+                &storage_proof[2],
+            )?;
 
             let sender_addr = EthAddress::decode(&mut sender_bytes.as_slice())
                 .map_err(|e| Error::Relayer(format!("Failed to decode return sender: {}", e)))?;
 
             // check if dest_bytes low bit is set
 
-            let return_amount: u64 = Decodable::decode(&mut amount_bytes.as_slice()).unwrap();
+            let return_amount: u64 = Decodable::decode(&mut amount_bytes.as_slice())
+                .map_err(|e| Error::Relayer(format!("Failed to decode return amount: {}", e)))?;
 
             let dest_entry = U256::from_big_endian(dest_bytes.as_slice());
 
             let dest_str: String = if dest_entry.bit(0) {
                 // length is stored
 
-                let dest_len: u64 = Decodable::decode(&mut dest_bytes.as_slice()).unwrap();
+                let dest_len: u64 = Decodable::decode(&mut dest_bytes.as_slice()).map_err(|e| {
+                    Error::Relayer(format!("Failed to decode return dest length: {}", e))
+                })?;
 
                 let dest_len = (dest_len / 2).saturating_sub(1);
 
@@ -158,8 +165,7 @@ impl StateProof {
                         keccak_256(BridgeContractData::dest_chunk_key(index, i).as_slice())
                             .as_slice(),
                         &storage_proof[i as usize + 3],
-                    )
-                    .unwrap();
+                    )?;
 
                     let chunk_str: String =
                         Decodable::decode(&mut dest_chunk.as_slice()).map_err(|e| {
@@ -178,7 +184,6 @@ impl StateProof {
             verified.push(BridgeContractData {
                 dest: dest_str.try_into()?,
                 amount: return_amount.into(),
-                // TODO: check sender bytes here
                 sender: Address::from(sender_addr.0 .0),
                 index,
             });
@@ -198,7 +203,7 @@ fn verify_key(root: [u8; 32], key: &[u8], proof: &EncodedProof) -> AppResult<Vec
     let result = trie
         .get(key)
         .map_err(|e| Error::Relayer(format!("TrieError: {}", e)))?
-        .ok_or(Error::Relayer("Key not found".to_string()))?;
+        .ok_or(Error::Relayer(format!("Key not found: {:?}", key)))?;
 
     Ok(result)
 }
@@ -227,9 +232,7 @@ impl BridgeContractData {
         let base = keccak_256(slot_key.as_slice());
 
         for i in 0..num_keys - 1 {
-            let key = U256::from_big_endian(base.as_slice())
-                .checked_add(U256::from(i))
-                .unwrap();
+            let key = U256::from_big_endian(base.as_slice()).saturating_add(U256::from(i));
             let mut key_bytes = [0u8; 32];
             key.to_big_endian(&mut key_bytes);
 
@@ -257,9 +260,8 @@ impl BridgeContractData {
     pub fn dest_chunk_key(index: u64, chunk_index: u64) -> [u8; 32] {
         let slot_key = Self::dest_key(index);
         let chunk_base = keccak_256(slot_key.as_slice());
-        let key = U256::from_big_endian(chunk_base.as_slice())
-            .checked_add(U256::from(chunk_index))
-            .unwrap();
+        let key =
+            U256::from_big_endian(chunk_base.as_slice()).saturating_add(U256::from(chunk_index));
         let mut key_bytes = [0u8; 32];
         key.to_big_endian(&mut key_bytes);
 
