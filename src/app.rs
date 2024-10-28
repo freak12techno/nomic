@@ -305,12 +305,11 @@ impl InnerApp {
     ) -> Result<()> {
         #[cfg(feature = "ethereum")]
         {
-            crate::bitcoin::exempt_from_fee()?;
-
-            // TODO: fee
-
             let signer = self.signer()?;
-            let coins = self.bitcoin.accounts.withdraw(signer, amount)?;
+            let mut coins = self.bitcoin.accounts.withdraw(signer, amount)?;
+
+            let fee = coins.take(20_000_000)?;
+            self.bitcoin.give_rewards(fee)?;
 
             let dest = Dest::EthAccount {
                 network,
