@@ -510,6 +510,7 @@ impl InnerApp {
 
             match sender {
                 Identity::NativeAccount { address } => {
+                    log::debug!("Returning funds to NativeAccount sender");
                     self.bitcoin.accounts.deposit(address, coins)?;
                 }
                 #[cfg(feature = "ethereum")]
@@ -518,10 +519,17 @@ impl InnerApp {
                     connection,
                     address,
                 } => {
-                    self.ethereum
+                    let res = self
+                        .ethereum
                         .network_mut(network)?
                         .connection_mut(connection.into())?
-                        .transfer(address.into(), coins)?;
+                        .transfer(address.into(), coins);
+                    if let Err(e) = res {
+                        log::debug!("Error returning funds to EthAccount sender: {:?}", e);
+                        // TODO: place funds in rewards pool?
+                    } else {
+                        log::debug!("Returning funds to EthAccount sender");
+                    }
                 }
                 _ => {}
             }
