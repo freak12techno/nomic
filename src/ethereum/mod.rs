@@ -816,18 +816,19 @@ impl Connection {
                 transfer_amount,
                 fee_amount,
                 message_index,
-                // max_gas,          TODO: include in hash
-                // fallback_address, TODO: include in hash
-                ..
+                max_gas,
+                fallback_address,
             } => call_hash(
                 self.chain_id,
                 self.bridge_contract.into(),
                 self.token_contract.into(),
                 *contract_address,
+                *fallback_address,
                 data,
                 *message_index,
                 *transfer_amount,
                 *fee_amount,
+                *max_gas,
             ),
             OutMessageArgs::UpdateValset(index, valset) => {
                 checkpoint_hash(self.chain_id, self.bridge_contract, valset, *index)
@@ -950,10 +951,12 @@ pub fn call_hash(
     bridge_contract: [u8; 20],
     token_contract: [u8; 20],
     dest_contract: [u8; 20],
+    fallback_addr: [u8; 20],
     data: &[u8],
     nonce_id: u64,
     transfer_amount: u64,
     fee_amount: u64,
+    max_gas: u64,
 ) -> [u8; 32] {
     let bytes = (
         uint256(chain_id as u64),
@@ -964,10 +967,12 @@ pub fn call_hash(
         vec![fee_amount],
         vec![addr_to_bytes32(token_contract.into())],
         addr_to_bytes32(dest_contract.into()),
+        addr_to_bytes32(fallback_addr.into()),
         data,
         u64::MAX,
         uint256(nonce_id),
         uint256(1),
+        uint256(max_gas),
     )
         .abi_encode_params();
 
