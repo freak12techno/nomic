@@ -1731,6 +1731,7 @@ impl IbcDest {
 }
 
 impl Migrate for IbcDest {
+    #[allow(clippy::needless_borrows_for_generic_args)]
     fn migrate(_src: Store, _dest: Store, mut bytes: &mut &[u8]) -> Result<Self> {
         let source_port = LengthString::<u8>::decode(&mut bytes)?;
         let source_channel = LengthString::<u8>::decode(&mut bytes)?;
@@ -2043,6 +2044,7 @@ impl Query for Dest {
 }
 
 impl Migrate for Dest {
+    #[allow(clippy::needless_borrows_for_generic_args)]
     fn migrate(src: Store, dest: Store, bytes: &mut &[u8]) -> Result<Self> {
         // TODO: !!!!!!!! remove from here once there are no legacy IBC dests
         // Migrate IBC dests
