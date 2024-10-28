@@ -734,6 +734,12 @@ impl Connection {
 
     /// Processes an adjustment to the emergency disbursal balances received
     /// from the remote bridge contract deployment.
+    ///
+    /// NOTE: as of this version, the emergency disbursal balances are not yet
+    /// being used by the Bitcoin state machine. When it is integrated, the
+    /// total balances will be checked against the actual amount of funds
+    /// bridged to the contract and all emergency disbursal balances will be
+    /// ignored if the total exceeds the actual balance.
     pub fn adjust_emergency_disbursal_balance(
         &mut self,
         script: Adapter<Script>,
@@ -1003,8 +1009,7 @@ pub fn logic_call_args(
         maxGas: alloy_core::primitives::U256::from(max_gas),
         payload: alloy_core::primitives::Bytes::from(data.to_vec()),
         timeOut: alloy_core::primitives::U256::from(u64::MAX),
-        invalidationId: alloy_core::primitives::FixedBytes::from(uint256(nonce_id)), /* TODO: set
-                                                                                      * in msg */
+        invalidationId: alloy_core::primitives::FixedBytes::from(uint256(nonce_id)),
         invalidationNonce: alloy_core::primitives::U256::from(1),
     }
 }
