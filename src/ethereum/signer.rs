@@ -13,6 +13,8 @@ impl<W: Wallet, F> Signer<W, F>
 where
     F: Fn() -> AppClient<InnerApp, InnerApp, HttpClient, Nom, W>,
 {
+    /// Starts a loop which constantly queries for Ethereum messages to sign and
+    /// submits the signatures.
     pub async fn start_ethereum_signing(
         &self,
         key_pairs: Vec<(ExtendedPubKey, &ExtendedPrivKey)>,
@@ -28,6 +30,7 @@ where
         }
     }
 
+    /// Queries for outbox messages to sign, then signs and submits each.
     async fn sign_eth_messages(
         &self,
         xpub: &ExtendedPubKey,

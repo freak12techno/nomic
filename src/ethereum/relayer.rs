@@ -6,6 +6,8 @@ use alloy_primitives::Uint;
 use alloy_provider::Provider;
 use alloy_transport::Transport;
 
+/// Builds a proof of the account and storage for state slots relevant to the
+/// return message queue in the bridge contract.
 pub async fn get_state_proof<
     T: Clone + Transport,
     P: Provider<T, alloy_provider::network::Ethereum> + Clone,
