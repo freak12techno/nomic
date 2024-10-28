@@ -77,8 +77,6 @@ pub const GAS_PRICE: u64 = 160_000;
 pub const APPROX_TRANSFER_GAS: u64 = 80_000;
 pub const APPROX_CALL_GAS: u64 = 100_000;
 
-pub const WHITELISTED_RELAYER_ADDR: &str = "nomic124j0ky0luh9jzqh9w2dk77cze9v0ckdupk50ny";
-
 #[orga]
 pub struct Ethereum {
     pub networks: Map<u32, Network>,
@@ -618,21 +616,6 @@ impl Connection {
         state_proof: StateProof,
     ) -> Result<()> {
         exempt_from_fee()?;
-
-        #[cfg(not(test))]
-        {
-            // TODO: remove whitelisted relaying once we have proper proof verification
-            let signer = orga::context::Context::resolve::<orga::plugins::Signer>()
-                .ok_or_else(|| Error::Signer("No Signer context available".into()))?
-                .signer
-                .ok_or_else(|| Error::Coins("Call must be signed".into()))?;
-            if signer.to_string().as_str() != WHITELISTED_RELAYER_ADDR {
-                return Err(orga::Error::App(
-                    "Only whitelisted relayers can relay returns".to_string(),
-                )
-                .into());
-            }
-        }
 
         for BridgeContractData {
             dest,
