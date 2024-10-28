@@ -1,3 +1,7 @@
+#[cfg(feature = "babylon")]
+use crate::babylon::Babylon;
+#[cfg(feature = "ethereum")]
+use crate::ethereum::{bytes32, Connection, Ethereum, Network};
 use crate::{
     bitcoin::{
         adapter::Adapter,
@@ -6,13 +10,14 @@ use crate::{
     incentives::Incentives,
 };
 
-use super::{InnerAppV5, InnerAppV6};
+use super::{InnerAppV5, InnerAppV6, InnerAppV7};
 use bitcoin::{
     util::{uint::Uint256, BitArray},
     BlockHeader,
 };
 use orga::{
     coins::Take,
+    collections::Map,
     ibc::Ibc,
     migrate::{Migrate, MigrateFrom},
     state::State,
@@ -79,5 +84,14 @@ impl MigrateFrom<InnerAppV5> for InnerAppV6 {
             #[cfg(feature = "ethereum")]
             ethereum: Default::default(), // TODO
         })
+    }
+}
+
+impl MigrateFrom<InnerAppV6> for InnerAppV7 {
+    fn migrate_from(other: InnerAppV6) -> Result<Self> {
+        // #[cfg(all(feature = "testnet", feature = "ethereum"))]
+        // let mut ethereum = Ethereum::default();
+
+        todo!();
     }
 }
