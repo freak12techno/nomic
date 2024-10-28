@@ -2986,6 +2986,7 @@ impl RelayEthereumCmd {
 
             self.config
                 .client()
+                .with_wallet(crate::wallet())
                 .call(
                     move |app| {
                         build_call!(app.ethereum.relay_return(
