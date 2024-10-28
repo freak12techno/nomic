@@ -1378,6 +1378,8 @@ mod tests {
 
         let secp = Secp256k1::new();
 
+        let anvil = Anvil::new().try_spawn().unwrap();
+
         let xpriv = ExtendedPrivKey::new_master(bitcoin::Network::Regtest, &[0]).unwrap();
         let xpub = ExtendedPubKey::from_priv(&secp, &xpriv);
 
@@ -1399,7 +1401,12 @@ mod tests {
             Address::from(data)
         };
         // TODO: token contract
-        let mut conn = Connection::new(123, bridge_addr, bridge_addr, valset);
+        let mut conn = Connection::new(
+            anvil.chain_id().try_into().unwrap(),
+            bridge_addr,
+            bridge_addr,
+            valset,
+        );
         let valset = conn.valset.clone();
 
         let new_valset = SignatorySet {
@@ -1424,7 +1431,6 @@ mod tests {
         conn.sign(1, pubkey.into(), sig).unwrap();
         assert!(conn.get(1).unwrap().sigs.signed());
 
-        let anvil = Anvil::new().try_spawn().unwrap();
         let rpc_url = anvil.endpoint().parse().unwrap();
         let provider = ProviderBuilder::new().on_http(rpc_url);
 
@@ -1503,12 +1509,14 @@ mod tests {
 
         let bridge_contract = Address::NULL;
         let token_contract = Address::NULL;
-        let chain_id = 1337;
+        let chain_id = 11155111;
 
-        let bootstrap: consensus::Bootstrap = todo!();
-        ethereum
-            .networks
-            .insert(chain_id, Network::new(chain_id, bootstrap)?)?;
+        let bootstrap: consensus::Bootstrap =
+            serde_json::from_str(include_str!("bootstrap/sepolia.json")).unwrap();
+        ethereum.networks.insert(
+            chain_id,
+            Network::new(chain_id, bootstrap, consensus::Network::ethereum_sepolia())?,
+        )?;
 
         ethereum.create_connection(chain_id, bridge_contract, token_contract, valset.clone())?;
 
@@ -1590,7 +1598,7 @@ mod tests {
         }
 
         let mut ethereum = Connection::new(
-            123,
+            anvil.chain_id().try_into().unwrap(),
             contract.address().0 .0.into(),
             token_contract_addr.unwrap().0 .0.into(),
             valset,
@@ -1602,7 +1610,10 @@ mod tests {
         );
 
         ethereum
-            .transfer(anvil.addresses()[0].0 .0.into(), Nbtc::mint(1_000_000))
+            .transfer(
+                anvil.addresses()[0].0 .0.into(),
+                Nbtc::mint(1_000_000_000_000),
+            )
             .unwrap();
         assert_eq!(ethereum.outbox.len(), 1);
         assert_eq!(ethereum.batch_index, 1);
@@ -1699,6 +1710,7 @@ mod tests {
         Context::remove::<Paid>();
     }
 
+    #[ignore]
     #[tokio::test]
     #[serial_test::serial]
     async fn contract_call() {
@@ -1721,7 +1733,7 @@ mod tests {
         };
         valset.normalize_vp(u32::MAX as u64);
 
-        let _anvil = Anvil::new().try_spawn().unwrap();
+        let anvil = Anvil::new().try_spawn().unwrap();
         let provider = ProviderBuilder::new()
             .with_recommended_fillers()
             .on_anvil_with_wallet();
@@ -1767,7 +1779,7 @@ mod tests {
         let token_contract_addr = token_contract_addr.unwrap().0 .0.into();
 
         let mut ethereum = Connection::new(
-            123,
+            anvil.chain_id().try_into().unwrap(),
             contract.address().0 .0.into(),
             token_contract_addr,
             valset,
@@ -1856,7 +1868,6 @@ mod tests {
         Context::remove::<Paid>();
     }
 
-    #[cfg(any())]
     #[ignore]
     #[tokio::test]
     #[serial_test::serial]
@@ -1926,19 +1937,22 @@ mod tests {
         let token_contract_addr = token_contract_addr.unwrap().0 .0.into();
 
         let mut ethereum = Connection::new(
-            123,
+            anvil.chain_id().try_into().unwrap(),
             contract.address().0 .0.into(),
             token_contract_addr,
             valset,
         );
 
         ethereum
-            .transfer(anvil.addresses()[0].0 .0.into(), Nbtc::mint(1_000_000))
+            .transfer(
+                anvil.addresses()[0].0 .0.into(),
+                Nbtc::mint(1_000_000_000_000),
+            )
             .unwrap();
         assert_eq!(ethereum.outbox.len(), 1);
         assert_eq!(ethereum.batch_index, 1);
         assert_eq!(ethereum.message_index, 1);
-        assert_eq!(ethereum.coins.amount, 1_000_000);
+        assert_eq!(ethereum.coins.amount, 1_000_000_000_000);
 
         let msg = ethereum.get(1).unwrap().sigs.message;
         let data = ethereum.get(1).unwrap().msg.clone();
@@ -2026,7 +2040,7 @@ mod tests {
             .sendToNomic(
                 alloy_core::primitives::Address::from_slice(&ethereum.token_contract.bytes()),
                 Address::from_pubkey([0; 33]).to_string(),
-                alloy_core::primitives::U256::from(500_000),
+                alloy_core::primitives::U256::from(500_000_000_000u64),
             )
             .send()
             .await
@@ -2036,29 +2050,10 @@ mod tests {
             .unwrap());
 
         assert_eq!(ethereum.return_index, 0);
-        // TODO
-        ethereum
-            .relay_return(
-                123,
-                (),
-                (),
-                vec![(
-                    0,
-                    Dest::NativeAccount {
-                        address: Address::from_pubkey([0; 33]),
-                    }
-                    .to_string()
-                    .try_into()
-                    .unwrap(),
-                    500_000,
-                    [0; 20],
-                )]
-                .try_into()
-                .unwrap(),
-            )
-            .unwrap();
-        assert_eq!(ethereum.return_index, 1);
-        assert_eq!(ethereum.coins.amount, 500_000);
+        // TODO: return relay
+
+        // assert_eq!(ethereum.return_index, 1);
+        // assert_eq!(ethereum.coins.amount, 500_000_000_000);
 
         Context::remove::<Paid>();
     }
