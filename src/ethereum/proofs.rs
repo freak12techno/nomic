@@ -10,13 +10,13 @@ use ethereum_triedb::{
 use orga::coins::Amount;
 use orga::encoding::LengthString;
 use orga::encoding::{Decode, Encode};
-use orga::orga;
 use orga::{coins::Address, encoding::LengthVec};
 use primitive_types::{H256, U256};
 use rlp::{Decodable as _, Rlp};
 use rlp_derive::RlpDecodable;
 use trie_db::{Trie, TrieDBBuilder};
 
+/// Account data from the Ethereum trie.
 #[derive(RlpDecodable, Debug)]
 struct Account {
     _nonce: u64,
@@ -25,7 +25,6 @@ struct Account {
     _code_hash: H256,
 }
 
-// TODO: remove unwraps
 // TODO: change error variants
 
 /// Encoded raw merkle trie nodes
@@ -43,6 +42,8 @@ pub struct StateProof {
 }
 
 impl StateProof {
+    /// Creates a new `StateProof` from the given account proof and list of dest
+    /// strings.
     pub fn from_response(
         proof: EIP1186AccountProofResponse,
         dests: Vec<(String, u64)>,
@@ -76,30 +77,31 @@ impl StateProof {
                 state_proof_for_index.push(storage_proof);
             }
 
-            state_proofs.push(state_proof_for_index.try_into().unwrap());
+            state_proofs.push(
+                state_proof_for_index
+                    .try_into()
+                    .map_err(|_e| Error::Relayer("Invalid storage proof".to_string()))?,
+            );
         }
 
         Ok(Self {
             address: Address::from(proof.address.0 .0),
             start_index,
             account_proof,
-            storage_proofs: state_proofs.try_into().map_err(|_e| {
-                Error::Relayer(
-                    "Invalid storage
-        proof"
-                        .to_string(),
-                )
-            })?,
+            storage_proofs: state_proofs
+                .try_into()
+                .map_err(|_e| Error::Relayer("Invalid storage proof".to_string()))?,
         })
     }
 
+    /// Verifies the proof against the given state root and returns the decoded
+    /// data.
     pub fn verify(self, state_root: [u8; 32]) -> AppResult<Vec<BridgeContractData>> {
         let result = verify_key(
             state_root,
             keccak_256(self.address.bytes().as_slice()).as_slice(),
             &self.account_proof,
-        )
-        .unwrap();
+        )?;
         let account = Account::decode(&Rlp::new(&result))
             .map_err(|e| Error::Relayer(format!("Failed to decode account: {}", e)))?;
 
@@ -119,31 +121,36 @@ impl StateProof {
                 root,
                 keccak_256(dest_key.as_slice()).as_slice(),
                 &storage_proof[0],
-            )
-            .unwrap();
-            dbg!(&dest_bytes);
+            )?;
+
             let amount_bytes = verify_key(
                 root,
                 keccak_256(amount_key.as_slice()).as_slice(),
                 &storage_proof[1],
-            )
-            .unwrap();
+            )?;
 
-            let sender_bytes = verify_key(root, sender_key.as_slice(), &storage_proof[2])?;
+            let sender_bytes = verify_key(
+                root,
+                keccak_256(sender_key.as_slice()).as_slice(),
+                &storage_proof[2],
+            )?;
 
             let sender_addr = EthAddress::decode(&mut sender_bytes.as_slice())
                 .map_err(|e| Error::Relayer(format!("Failed to decode return sender: {}", e)))?;
 
             // check if dest_bytes low bit is set
 
-            let return_amount: u64 = Decodable::decode(&mut amount_bytes.as_slice()).unwrap();
+            let return_amount: u64 = Decodable::decode(&mut amount_bytes.as_slice())
+                .map_err(|e| Error::Relayer(format!("Failed to decode return amount: {}", e)))?;
 
             let dest_entry = U256::from_big_endian(dest_bytes.as_slice());
 
             let dest_str: String = if dest_entry.bit(0) {
                 // length is stored
 
-                let dest_len: u64 = Decodable::decode(&mut dest_bytes.as_slice()).unwrap();
+                let dest_len: u64 = Decodable::decode(&mut dest_bytes.as_slice()).map_err(|e| {
+                    Error::Relayer(format!("Failed to decode return dest length: {}", e))
+                })?;
 
                 let dest_len = (dest_len / 2).saturating_sub(1);
 
@@ -163,8 +170,7 @@ impl StateProof {
                         keccak_256(BridgeContractData::dest_chunk_key(index, i).as_slice())
                             .as_slice(),
                         &storage_proof[i as usize + 3],
-                    )
-                    .unwrap();
+                    )?;
 
                     let chunk_str: String =
                         Decodable::decode(&mut dest_chunk.as_slice()).map_err(|e| {
@@ -183,7 +189,6 @@ impl StateProof {
             verified.push(BridgeContractData {
                 dest: dest_str.try_into()?,
                 amount: return_amount.into(),
-                // TODO: check sender bytes here
                 sender: Address::from(sender_addr.0 .0),
                 index,
             });
@@ -203,7 +208,7 @@ fn verify_key(root: [u8; 32], key: &[u8], proof: &EncodedProof) -> AppResult<Vec
     let result = trie
         .get(key)
         .map_err(|e| Error::Relayer(format!("TrieError: {}", e)))?
-        .ok_or(Error::Relayer("Key not found".to_string()))?;
+        .ok_or(Error::Relayer(format!("Key not found: {:?}", key)))?;
 
     Ok(result)
 }
@@ -218,10 +223,15 @@ pub struct BridgeContractData {
 }
 
 impl BridgeContractData {
+    /// Slot in the trie for the dest strings of the return message queue.
     pub const RETURN_DESTS_SLOT: u64 = 7;
+    /// Slot in the trie for the fund amounts of the return message queue.
     pub const RETURN_AMOUNTS_SLOT: u64 = 8;
+    /// Slot in the trie for the sender addresses of the return message queue.
     pub const RETURN_SENDERS_SLOT: u64 = 9;
 
+    /// Returns the trie keys for the given dest string at the given return
+    /// queue index.
     pub fn dest_keys(value: &str, index: u64) -> Vec<[u8; 32]> {
         let num_keys = 1 + (value.len() + 31) / 32;
 
@@ -232,9 +242,7 @@ impl BridgeContractData {
         let base = keccak_256(slot_key.as_slice());
 
         for i in 0..num_keys - 1 {
-            let key = U256::from_big_endian(base.as_slice())
-                .checked_add(U256::from(i))
-                .unwrap();
+            let key = U256::from_big_endian(base.as_slice()).saturating_add(U256::from(i));
             let mut key_bytes = [0u8; 32];
             key.to_big_endian(&mut key_bytes);
 
@@ -244,33 +252,41 @@ impl BridgeContractData {
         res
     }
 
+    /// Returns the trie key for the head of the dest string at the given return
+    /// queue index.
     pub fn dest_key(index: u64) -> [u8; 32] {
         let index = U256::from(index);
         Self::get_key(index, Self::RETURN_DESTS_SLOT.into())
     }
 
+    /// Returns the trie key for the sender address at the given return queue
+    /// index.
     pub fn sender_key(index: u64) -> [u8; 32] {
         let index = U256::from(index);
         Self::get_key(index, Self::RETURN_SENDERS_SLOT.into())
     }
 
+    /// Returns the trie key for the fund amount at the given return queue
+    /// index.
     pub fn amount_key(index: u64) -> [u8; 32] {
         let index = U256::from(index);
         Self::get_key(index, Self::RETURN_AMOUNTS_SLOT.into())
     }
 
+    /// Returns the trie key for the chunk of the dest string at the given
+    /// return queue index.
     pub fn dest_chunk_key(index: u64, chunk_index: u64) -> [u8; 32] {
         let slot_key = Self::dest_key(index);
         let chunk_base = keccak_256(slot_key.as_slice());
-        let key = U256::from_big_endian(chunk_base.as_slice())
-            .checked_add(U256::from(chunk_index))
-            .unwrap();
+        let key =
+            U256::from_big_endian(chunk_base.as_slice()).saturating_add(U256::from(chunk_index));
         let mut key_bytes = [0u8; 32];
         key.to_big_endian(&mut key_bytes);
 
         key_bytes
     }
 
+    /// Returns the trie key for the given index and slot.
     fn get_key(index: U256, slot: U256) -> [u8; 32] {
         let mut index_bytes = [0u8; 32];
         index.to_big_endian(&mut index_bytes);
@@ -281,27 +297,11 @@ impl BridgeContractData {
     }
 }
 
+/// Returns the number of extra 32-byte slots required to store the given length
+/// of string data.
+///
+/// Strings less than 32 bytes can be stored inline in one slot, while longer
+/// strings are chunked across additional slots.
 pub fn extra_slots_required(len: usize) -> usize {
     (len + 31) / 32
-}
-// updated header
-#[derive(Debug, Clone, Encode, Decode)]
-pub struct ConsensusProof {
-    pub state_root: [u8; 32],
-}
-
-impl ConsensusProof {
-    pub fn verify(self, prev_consensus_state: &ConsensusState) -> AppResult<ConsensusState> {
-        Ok(ConsensusState {
-            state_root: self.state_root,
-        })
-    }
-}
-
-// sync committee / next_sync_committee won't change across updates except when
-// no longer in current period
-#[orga]
-#[derive(Debug, Clone)]
-pub struct ConsensusState {
-    pub state_root: [u8; 32],
 }

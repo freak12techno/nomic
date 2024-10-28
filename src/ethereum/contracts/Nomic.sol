@@ -509,10 +509,12 @@ contract Nomic is ReentrancyGuard {
                     _args.feeAmounts,
                     _args.feeTokenContracts,
                     _args.logicContractAddress,
+                    _args.fallbackAddress,
                     _args.payload,
                     _args.timeOut,
                     _args.invalidationId,
-                    _args.invalidationNonce
+                    _args.invalidationNonce,
+                    _args.maxGas
                 )
             );
 

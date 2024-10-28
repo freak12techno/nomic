@@ -33,6 +33,7 @@ use orga::describe::{Describe, Descriptor};
 use orga::encoding::{Decode, Encode, LengthString, LengthVec};
 use orga::ibc::ibc_rs::apps::transfer::types::Memo;
 use orga::ibc::ClientIdKey as ClientId;
+use sha2::{Digest, Sha256};
 
 use std::io::Read;
 use std::str::FromStr;
@@ -103,7 +104,7 @@ const CALL_FEE_USATS: u64 = 100_000_000;
 #[cfg(feature = "ethereum")]
 const ETH_CREATE_CONNECTION_FEE_USATS: u64 = 10_000_000_000;
 
-const OSMOSIS_CHANNEL_ID: &str = "channel-1";
+pub const OSMOSIS_CHANNEL_ID: &str = "channel-1";
 
 #[cfg(feature = "frost")]
 const FROST_GROUP_INTERVAL: i64 = 10 * 60;
@@ -201,7 +202,7 @@ impl InnerApp {
     /// breaking changes are made to either the state encoding or logic of the
     /// protocol, and requires a network upgrade to be coordinated via the
     /// upgrade module.
-    pub const CONSENSUS_VERSION: u8 = 13;
+    pub const CONSENSUS_VERSION: u8 = 14;
 
     #[cfg(feature = "full")]
     fn configure_faucets(&mut self) -> Result<()> {
@@ -304,12 +305,11 @@ impl InnerApp {
     ) -> Result<()> {
         #[cfg(feature = "ethereum")]
         {
-            crate::bitcoin::exempt_from_fee()?;
-
-            // TODO: fee
-
             let signer = self.signer()?;
-            let coins = self.bitcoin.accounts.withdraw(signer, amount)?;
+            let mut coins = self.bitcoin.accounts.withdraw(signer, amount)?;
+
+            let fee = coins.take(20_000_000)?;
+            self.bitcoin.give_rewards(fee)?;
 
             let dest = Dest::EthAccount {
                 network,
@@ -485,18 +485,18 @@ impl InnerApp {
     ) -> Result<()> {
         let mut succeeded = false;
         let amount = coins.amount;
-        if self.validate_dest(&dest, amount, sender).is_ok() {
-            if let Err(e) = self.credit_dest(dest.clone(), coins.take(amount)?, sender) {
-                log::debug!("Error crediting transfer: {:?}", e);
-                // TODO: ensure no errors can happen after mutating
-                // state in credit_dest since state won't be reverted
+        if let Err(e) = self.validate_dest(&dest, amount, sender) {
+            log::debug!("Error validating transfer: {}", e);
+        } else if let Err(e) = self.credit_dest(dest.clone(), coins.take(amount)?, sender) {
+            log::debug!("Error crediting transfer: {:?}", e);
+            // TODO: ensure no errors can happen after mutating
+            // state in credit_dest since state won't be reverted
 
-                // Assume coins passed into credit_dest are burnt,
-                // replace them in `coins`
-                coins.give(Coin::mint(amount))?;
-            } else {
-                succeeded = true;
-            }
+            // Assume coins passed into credit_dest are burnt,
+            // replace them in `coins`
+            coins.give(Coin::mint(amount))?;
+        } else {
+            succeeded = true;
         }
 
         // Handle failures
@@ -510,6 +510,7 @@ impl InnerApp {
 
             match sender {
                 Identity::NativeAccount { address } => {
+                    log::debug!("Returning funds to NativeAccount sender");
                     self.bitcoin.accounts.deposit(address, coins)?;
                 }
                 #[cfg(feature = "ethereum")]
@@ -518,10 +519,17 @@ impl InnerApp {
                     connection,
                     address,
                 } => {
-                    self.ethereum
+                    let res = self
+                        .ethereum
                         .network_mut(network)?
                         .connection_mut(connection.into())?
-                        .transfer(address.into(), coins)?;
+                        .transfer(address.into(), coins);
+                    if let Err(e) = res {
+                        log::debug!("Error returning funds to EthAccount sender: {:?}", e);
+                        // TODO: place funds in rewards pool?
+                    } else {
+                        log::debug!("Returning funds to EthAccount sender");
+                    }
                 }
                 _ => {}
             }
@@ -929,6 +937,22 @@ mod abci {
                         let address = line.parse().unwrap();
                         self.accounts.deposit(address, Coin::mint(10_000_000_000))
                     })?;
+
+                #[cfg(feature = "ethereum")]
+                {
+                    // Add Ethereum Sepolia
+                    let bootstrap =
+                        serde_json::from_str(include_str!("./ethereum/bootstrap/sepolia.json"))
+                            .unwrap();
+                    self.ethereum.networks.insert(
+                        11155111,
+                        crate::ethereum::Network::new(
+                            11155111,
+                            bootstrap,
+                            crate::ethereum::consensus::Network::ethereum_sepolia(),
+                        )?,
+                    )?;
+                }
             }
 
             Ok(())
@@ -972,11 +996,11 @@ mod abci {
                 if !self.bitcoin.checkpoints.is_empty()? {
                     self.ethereum
                         .step(&self.bitcoin.checkpoints.active_sigset()?)?;
-                }
 
-                let pending = &mut self.bitcoin.checkpoints.building_mut()?.pending;
-                for (dest, coins, sender) in self.ethereum.take_pending()? {
-                    pending.insert((dest, sender), coins)?;
+                    let pending = &mut self.bitcoin.checkpoints.building_mut()?.pending;
+                    for (dest, coins, sender) in self.ethereum.take_pending()? {
+                        pending.insert((dest, sender), coins)?;
+                    }
                 }
             }
 
@@ -1593,7 +1617,7 @@ pub struct IbcDest {
     pub receiver: LengthString<u8>,
     pub sender: LengthString<u8>,
     pub timeout_timestamp: u64,
-    pub memo: LengthString<u8>,
+    pub memo: LengthString<u16>,
 }
 
 impl IbcDest {
@@ -1680,7 +1704,9 @@ impl IbcDest {
         Ok(())
     }
 
-    pub fn legacy_encode(&self) -> Result<Vec<u8>> {
+    pub fn legacy_encode(&self) -> Result<Vec<Vec<u8>>> {
+        let mut encodings = vec![];
+
         let mut bytes = vec![];
         self.source_port.encode_into(&mut bytes)?;
         self.source_channel.encode_into(&mut bytes)?;
@@ -1688,8 +1714,47 @@ impl IbcDest {
         EdAdapter(self.sender_signer()?).encode_into(&mut bytes)?;
         self.timeout_timestamp.encode_into(&mut bytes)?;
         self.memo.encode_into(&mut bytes)?;
+        encodings.push(Sha256::digest(bytes).to_vec());
 
-        Ok(bytes)
+        if self.memo.len() < 256 {
+            let mut bytes = vec![];
+            self.source_port.encode_into(&mut bytes)?;
+            self.source_channel.encode_into(&mut bytes)?;
+            self.receiver.encode_into(&mut bytes)?;
+            self.sender.encode_into(&mut bytes)?;
+            self.timeout_timestamp.encode_into(&mut bytes)?;
+            LengthString::<u8>::new(self.memo.len() as u8, self.memo.to_string())
+                .encode_into(&mut bytes)?;
+
+            let hash = Sha256::digest(bytes);
+            let mut bytes = Vec::with_capacity(hash.len() + 1);
+            bytes.push(0); // version byte
+            bytes.extend_from_slice(&hash);
+            encodings.push(bytes);
+        }
+
+        Ok(encodings)
+    }
+}
+
+impl Migrate for IbcDest {
+    #[allow(clippy::needless_borrows_for_generic_args)]
+    fn migrate(_src: Store, _dest: Store, mut bytes: &mut &[u8]) -> Result<Self> {
+        let source_port = LengthString::<u8>::decode(&mut bytes)?;
+        let source_channel = LengthString::<u8>::decode(&mut bytes)?;
+        let receiver = LengthString::<u8>::decode(&mut bytes)?;
+        let sender = LengthString::<u8>::decode(&mut bytes)?;
+        let timeout_timestamp = u64::decode(&mut bytes)?;
+        let memo = LengthString::<u8>::decode(&mut bytes)?;
+
+        Ok(IbcDest {
+            source_port,
+            source_channel,
+            receiver,
+            sender,
+            timeout_timestamp,
+            memo: memo.to_string().try_into().unwrap(),
+        })
     }
 }
 
@@ -1904,11 +1969,11 @@ impl Dest {
     }
 
     // TODO: remove once there are no legacy commitments in-flight
-    pub fn legacy_commitment_bytes(&self) -> Result<Vec<u8>> {
+    pub fn legacy_commitment_bytes(&self) -> Result<Vec<Vec<u8>>> {
         use sha2::{Digest, Sha256};
         let bytes = match self {
-            Dest::NativeAccount { address } => address.bytes().into(),
-            Dest::Ibc { data } => Sha256::digest(data.legacy_encode()?).to_vec(),
+            Dest::NativeAccount { address } => vec![address.bytes().into()],
+            Dest::Ibc { data } => data.legacy_encode()?,
             _ => return Err(Error::App("Invalid dest for legacy commitment".to_string())),
         };
 
@@ -1986,7 +2051,18 @@ impl Query for Dest {
 }
 
 impl Migrate for Dest {
+    #[allow(clippy::needless_borrows_for_generic_args)]
     fn migrate(src: Store, dest: Store, bytes: &mut &[u8]) -> Result<Self> {
+        // TODO: !!!!!!!! remove from here once there are no legacy IBC dests
+        // Migrate IBC dests
+        let mut maybe_ibc_bytes = &mut &**bytes;
+        let variant = u8::decode(&mut maybe_ibc_bytes)?;
+        if variant == 1 {
+            let ibc_dest = IbcDest::migrate(src, dest, maybe_ibc_bytes)?;
+            return Ok(Self::Ibc { data: ibc_dest });
+        }
+        // TODO: !!!!!!!! remove to here once there are no legacy IBC dests
+
         Self::load(src, bytes)
     }
 }
