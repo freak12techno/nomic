@@ -1027,6 +1027,6 @@ mod tests {
         }
         client.update(finality_update.data, 1727740110).unwrap();
 
-        assert_eq!(client.lcs.finalized_header.slot, 10076224);
+        assert_eq!(client.lcs.finalized_header.beacon.slot, 10076224);
     }
 }
