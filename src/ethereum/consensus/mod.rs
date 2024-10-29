@@ -35,6 +35,8 @@ use crate::error::Result;
 #[cfg(feature = "ethereum-full")]
 pub mod relayer;
 
+/// Maintains the consensus state of an Ethereum chain, which can be updated via
+/// consensus proofs based on the Altair light client protocol.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct LightClient {
     lcs: LightClientStore,
@@ -42,6 +44,8 @@ pub struct LightClient {
 }
 
 impl LightClient {
+    /// Create a new `LightClient` with the given bootstrap data and network
+    /// configuration.
     pub fn new(bootstrap: Bootstrap, network: Network) -> Result<Self> {
         let bootstrap = bootstrap.into();
 
@@ -57,6 +61,11 @@ impl LightClient {
         Ok(LightClient { lcs, network })
     }
 
+    /// Verify and apply the update to the light client state.
+    ///
+    /// To minimize updates, this is designed to only allow updates that advance
+    /// to the next finalized slot, or to the next sync committee period.
+    /// There should be at most one update per epoch.
     pub fn update(&mut self, update: Update, now_seconds: u64) -> Result<()> {
         let expected_slot = (now_seconds - self.network.genesis_time) / 12;
         let genesis_root = (&self.network.genesis_vals_root.0).into();
@@ -79,10 +88,12 @@ impl LightClient {
         Ok(())
     }
 
+    /// Get the most recently finalized slot.
     pub fn slot(&self) -> u64 {
         self.lcs.finalized_header.beacon.slot
     }
 
+    /// Get the most recently finalized block number.
     pub fn block_number(&self) -> u64 {
         *self
             .lcs
@@ -93,6 +104,7 @@ impl LightClient {
             .block_number()
     }
 
+    /// Get the most recently finalized execution state root.
     pub fn state_root(&self) -> Bytes32 {
         self.lcs
             .finalized_header
@@ -104,6 +116,7 @@ impl LightClient {
             .into()
     }
 
+    /// Get the underlying `LightClientStore`.
     pub fn light_client_store(&self) -> &LightClientStore {
         &self.lcs
     }
@@ -238,6 +251,7 @@ impl Describe for LightClient {
     }
 }
 
+/// The network parameters for an Ethereum chain.
 #[derive(Clone, Debug, Default, Encode, Decode, Serialize, Deserialize)]
 pub struct Network {
     pub genesis_vals_root: Bytes32,
@@ -246,6 +260,7 @@ pub struct Network {
 }
 
 impl Network {
+    /// Network parameters for the Ethereum mainnet.
     pub fn ethereum_mainnet() -> Self {
         Network {
             genesis_vals_root: "0x4b363db94e286120d76eb905340fdd4e54bfe9f06bf33ff6cf5ad27f511bfe95"
@@ -256,6 +271,7 @@ impl Network {
         }
     }
 
+    /// Network parameters for the Ethereum Sepolia testnet.
     pub fn ethereum_sepolia() -> Self {
         Network {
             genesis_vals_root: "0xd8ea171f3c94aea21ebc42a1ed61052acf3f9209c00e4efbaaddac09ed9b8078"
@@ -267,6 +283,8 @@ impl Network {
     }
 }
 
+/// An update to the light client state, and all necessary proof and signature
+/// data.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Update {
     pub attested_header: LightClientHeader,
@@ -1009,6 +1027,6 @@ mod tests {
         }
         client.update(finality_update.data, 1727740110).unwrap();
 
-        assert_eq!(client.lcs.finalized_header.slot, 10076224);
+        assert_eq!(client.lcs.finalized_header.beacon.slot, 10076224);
     }
 }

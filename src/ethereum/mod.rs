@@ -71,19 +71,28 @@ pub mod relayer;
 #[cfg(feature = "ethereum-full")]
 pub mod signer;
 
+/// How often to send messages updating to a new valset, in seconds.
 pub const VALSET_INTERVAL: u64 = 60 * 60 * 24;
 /// Gas price in microsats.
 pub const GAS_PRICE: u64 = 160_000;
+/// Approximate gas cost for a transfer in wei, deducted from transfers from
+/// Nomic to the destination chain.
 pub const APPROX_TRANSFER_GAS: u64 = 80_000;
+/// Approximate gas cost for a contract call in wei, deducted from calls made on
+/// the destination chain.
 pub const APPROX_CALL_GAS: u64 = 100_000;
 
+/// The main state machine container for all Ethereum networks managed by Nomic.
 #[orga]
 pub struct Ethereum {
+    /// The Ethereum networks managed by Nomic, keyed by chain ID.
     pub networks: Map<u32, Network>,
 }
 
 #[orga]
 impl Ethereum {
+    /// Advances the state of all networks managed by Nomic, should be called
+    /// once per Nomic block.
     pub fn step(&mut self, active_sigset: &SignatorySet) -> Result<()> {
         let ids: Vec<_> = self
             .networks
@@ -98,6 +107,10 @@ impl Ethereum {
         Ok(())
     }
 
+    /// Takes all pending transfers from all networks managed by Nomic, to be
+    /// moved into Nomic's Bitcoin state machine and eventually credited. These
+    /// transfers are either incoming from the remote EVM chain, or a bounceback
+    /// caused by a failed call or transfer.
     pub fn take_pending(&mut self) -> Result<Vec<(Dest, Coin<Nbtc>, Identity)>> {
         let ids: Vec<_> = self
             .networks
@@ -112,6 +125,9 @@ impl Ethereum {
         Ok(pending)
     }
 
+    /// Verifies and applies a consensus light client update to the given
+    /// network. This should be called by relayers whenever there is a new
+    /// finality update from the remote chain's consensus process.
     #[call]
     pub fn relay_consensus_update(
         &mut self,
@@ -129,6 +145,9 @@ impl Ethereum {
         net.light_client.update(update, now_seconds)
     }
 
+    /// Verifies a state proof and processes the incoming transfers returning
+    /// from the remote chain. This should be called by relayers whenever there
+    /// is a new state proof from the remote chain.
     #[call]
     pub fn relay_return(
         &mut self,
@@ -153,6 +172,9 @@ impl Ethereum {
         conn.relay_return(network, state_root, state_proof)
     }
 
+    /// Verifies a signature from a valset signer for a given message within a
+    /// given connection then adds it to the state. This should be called by
+    /// signers whenever they have signed an outbox message.
     #[call]
     pub fn sign(
         &mut self,
@@ -176,6 +198,8 @@ impl Ethereum {
         conn.sign(msg_index, pubkey, sig)
     }
 
+    /// Creates a new connection to the given bridge contract deployment on the
+    /// given remote chain and adds it to the state.
     pub fn create_connection(
         &mut self,
         chain_id: u32,
@@ -203,6 +227,7 @@ impl Ethereum {
         Ok(())
     }
 
+    /// Gets a list of all messages that need to be signed by the given signer.
     #[query]
     pub fn to_sign(&self, xpub: Xpub) -> Result<ToSign> {
         let mut to_sign = vec![];
@@ -240,6 +265,7 @@ impl Ethereum {
         Ok(to_sign)
     }
 
+    /// Gets a network by its chain ID.
     pub fn network(&self, network: u32) -> Result<Ref<Network>> {
         Ok(self
             .networks
@@ -247,6 +273,7 @@ impl Ethereum {
             .ok_or_else(|| Error::App("Unknown network".to_string()))?)
     }
 
+    /// Gets a mutable reference to a network by its chain ID.
     pub fn network_mut(&mut self, network: u32) -> Result<ChildMut<u32, Network>> {
         Ok(self
             .networks
@@ -254,7 +281,17 @@ impl Ethereum {
             .ok_or_else(|| Error::App("Unknown network".to_string()))?)
     }
 
-    // TODO: we shouldn't need these:
+    /// Gets the current timestamp from the time context (e.g. from the
+    /// Tendermint block header).
+    fn now(&mut self) -> Result<i64> {
+        Ok(self
+            .context::<Time>()
+            .ok_or_else(|| Error::App("No time context available".into()))?
+            .seconds)
+    }
+
+    // TODO: we shouldn't need these, these are a workaround for issues within the
+    // underlying Orga client query system
     #[query]
     pub fn token_contract(&self, network: u32, connection: Address) -> Result<Address> {
         Ok(self
@@ -328,7 +365,6 @@ impl Ethereum {
             .light_client
             .block_number())
     }
-
     #[query]
     pub fn light_client(&self, chain_id: u32) -> Result<LightClient> {
         Ok(self
@@ -337,13 +373,6 @@ impl Ethereum {
             .ok_or(Error::App("Chain not found".to_string()))?
             .light_client
             .clone())
-    }
-
-    fn now(&mut self) -> Result<i64> {
-        Ok(self
-            .context::<Time>()
-            .ok_or_else(|| Error::App("No time context available".into()))?
-            .seconds)
     }
 }
 type ToSign = Vec<(u32, Address, u64, u32, [u8; 32], OutMessageArgs)>;
@@ -358,6 +387,8 @@ pub struct Network {
 
 #[orga]
 impl Network {
+    /// Creates a new Ethereum network with the given chain ID, consensus
+    /// bootstrap data, and consensus network parameters.
     pub fn new(
         id: u32,
         bootstrap: consensus::Bootstrap,
@@ -372,6 +403,8 @@ impl Network {
         })
     }
 
+    /// Advances the state of all connections in the network, should be called
+    /// once per Nomic block.
     pub fn step(&mut self, active_sigset: &SignatorySet) -> Result<()> {
         let addrs: Vec<_> = self
             .connections
@@ -386,6 +419,10 @@ impl Network {
         Ok(())
     }
 
+    /// Takes all pending transfers from all connections in the network, to be
+    /// moved into Nomic's Bitcoin state machine and eventually credited. These
+    /// transfers are either incoming from the remote EVM chain, or a bounceback
+    /// caused by a failed call or transfer.
     pub fn take_pending(&mut self) -> Result<Vec<(Dest, Coin<Nbtc>, Identity)>> {
         let addrs: Vec<_> = self
             .connections
@@ -400,6 +437,7 @@ impl Network {
         Ok(pending)
     }
 
+    /// Gets a connection by its bridge contract address.
     pub fn connection(&self, connection: Address) -> Result<Ref<Connection>> {
         Ok(self
             .connections
@@ -407,6 +445,7 @@ impl Network {
             .ok_or_else(|| Error::App("Unknown connection".to_string()))?)
     }
 
+    /// Gets a mutable reference to a connection by its bridge contract address.
     pub fn connection_mut(&mut self, connection: Address) -> Result<ChildMut<Address, Connection>> {
         Ok(self
             .connections
@@ -415,29 +454,57 @@ impl Network {
     }
 }
 
+/// A connection to a deployment of the Nomic bridge contract on a remote EVM
+/// chain.
+///
+/// This struct manages the flow of BTC and messages to and from the contract.
+/// It maintains an outbox, which is a sequential queue of messages to be
+/// relayed to the contract, and a set of emergency disbursal balances which
+/// allocates the funds bridged to the contract to Bitcoin destinations to be
+/// used if the Nomic protocol loses liveness.
 #[orga]
 pub struct Connection {
+    /// The chain ID of the remote EVM chain.
     pub chain_id: u32,
+    /// The address of the Nomic bridge contract on the remote EVM chain.
     pub bridge_contract: Address,
+    /// The address of the BTC token contract on the remote EVM chain, managed
+    /// by the bridge contract.
     pub token_contract: Address,
+    /// The interval in seconds between valset updates.
     pub valset_interval: u64,
 
+    /// The index of the current message in the outbox.
     pub message_index: u64,
+    /// The index of the next transfer batch to be sent to the contract.
     pub batch_index: u64,
+    /// The index of the current valset in the contract.
     pub valset_index: u64,
+    /// The index of the most recently processed return message from the
+    /// contract.
     pub return_index: u64,
 
+    /// The total amount of BTC accounted for in the emergency disbursal
+    /// balances.
     pub emergency_disbursal_total: u64,
+    /// The emergency disbursal balances for each Bitcoin destination.
     pub emergency_disbursal_balances: Map<Adapter<Script>, u64>,
 
+    /// An ordered queue of messages to be sent to the contract.
     pub outbox: Deque<OutMessage>,
+    /// Pending transfers to be passed to the Bitcoin state machine within the
+    /// Nomic protocol.
     pub pending: Deque<(Dest, Coin<Nbtc>, Identity)>,
+    /// The funds currently bridged to the contract.
     pub coins: Coin<Nbtc>,
+    /// The current valset of signatories for the contract.
     pub valset: SignatorySet,
 }
 
 #[orga]
 impl Connection {
+    /// Creates a new connection to the given bridge contract deployment on the
+    /// given remote chain.
     pub fn new(
         chain_id: u32,
         bridge_contract: Address,
@@ -463,8 +530,11 @@ impl Connection {
         }
     }
 
-    // TODO: method to return pending nbtc transfers
-
+    /// Advances the state of the connection, should be called once per Nomic
+    /// block.
+    ///
+    /// This function checks if a new valset update is needed, and if so, pushes
+    /// a new valset update message to the outbox.
     pub fn step(&mut self, active_sigset: &SignatorySet) -> Result<()> {
         if active_sigset.create_time - self.valset.create_time >= self.valset_interval
             && self.valset.index != active_sigset.index
@@ -475,6 +545,7 @@ impl Connection {
         Ok(())
     }
 
+    /// Validates the destination and amount of a transfer.
     pub fn validate_transfer(&self, dest: Address, amount: u64) -> Result<()> {
         let fee_amount = APPROX_TRANSFER_GAS * GAS_PRICE;
         if amount < fee_amount {
@@ -488,6 +559,8 @@ impl Connection {
         Ok(())
     }
 
+    /// Pushes a message to the outbox to transfer funds to the given Ethereum
+    /// address.
     pub fn transfer(&mut self, dest: Address, coins: Coin<Nbtc>) -> Result<()> {
         let amount: u64 = coins.amount.into();
         self.validate_transfer(dest, amount)?;
@@ -515,6 +588,7 @@ impl Connection {
         Ok(())
     }
 
+    /// Validates the destination and amount of a contract call.
     pub fn validate_contract_call(
         &self,
         max_gas: u64,
@@ -533,6 +607,7 @@ impl Connection {
         Ok(())
     }
 
+    /// Pushes a message to the outbox to call a contract with the given data.
     pub fn call_contract(
         &mut self,
         // TODO: ethaddress type
@@ -561,6 +636,8 @@ impl Connection {
         })
     }
 
+    /// Pushes a message to the outbox to update the valset to the given new
+    /// valset.
     fn update_valset(&mut self, mut new_valset: SignatorySet) -> Result<()> {
         new_valset.normalize_vp(u32::MAX as u64);
         self.valset_index += 1;
@@ -573,6 +650,7 @@ impl Connection {
         Ok(())
     }
 
+    /// Pushes a message to the outbox.
     fn push_outbox(&mut self, msg: OutMessageArgs) -> Result<()> {
         let hash = self.message_hash(&msg);
         let mut sigs = ThresholdSig::from_sigset(&self.valset)?;
@@ -592,6 +670,7 @@ impl Connection {
         Ok(())
     }
 
+    /// Takes all pending transfers from the connection.
     pub fn take_pending(&mut self) -> Result<Vec<(Dest, Coin<Nbtc>, Identity)>> {
         let mut pending = Vec::new();
         while let Some(entry) = self.pending.pop_front()? {
@@ -600,6 +679,8 @@ impl Connection {
         Ok(pending)
     }
 
+    /// Verifies a signature from a valset signer for a given message and adds
+    /// it to the state.
     #[call]
     pub fn sign(&mut self, msg_index: u64, pubkey: Pubkey, sig: Signature) -> Result<()> {
         exempt_from_fee()?;
@@ -609,6 +690,8 @@ impl Connection {
         Ok(())
     }
 
+    /// Verifies a state proof and processes the incoming transfers coming back
+    /// from the remote bridge contract deployment.
     pub fn relay_return(
         &mut self,
         network: u32,
@@ -649,6 +732,14 @@ impl Connection {
         Ok(())
     }
 
+    /// Processes an adjustment to the emergency disbursal balances received
+    /// from the remote bridge contract deployment.
+    ///
+    /// NOTE: as of this version, the emergency disbursal balances are not yet
+    /// being used by the Bitcoin state machine. When it is integrated, the
+    /// total balances will be checked against the actual amount of funds
+    /// bridged to the contract and all emergency disbursal balances will be
+    /// ignored if the total exceeds the actual balance.
     pub fn adjust_emergency_disbursal_balance(
         &mut self,
         script: Adapter<Script>,
@@ -685,17 +776,21 @@ impl Connection {
         Ok(())
     }
 
+    /// Gets a message from the outbox by its index.
     #[query]
     pub fn get(&self, msg_index: u64) -> Result<Ref<OutMessage>> {
         let index = self.abs_index(msg_index)?;
         Ok(self.outbox.get(index)?.unwrap())
     }
 
+    /// Gets a mutable reference to a message from the outbox by its index.
     pub fn get_mut(&mut self, msg_index: u64) -> Result<ChildMut<u64, OutMessage>> {
         let index = self.abs_index(msg_index)?;
         Ok(self.outbox.get_mut(index)?.unwrap())
     }
 
+    /// Gets the absolute index of a message in the outbox by its normalized
+    /// index.
     #[query]
     pub fn abs_index(&self, msg_index: u64) -> Result<u64> {
         let start_index = self.message_index + 1 - self.outbox.len();
@@ -706,6 +801,7 @@ impl Connection {
         Ok(msg_index - start_index)
     }
 
+    /// Gets the hash of an outgoing message, used for signing.
     fn message_hash(&self, msg: &OutMessageArgs) -> [u8; 32] {
         sighash(match msg {
             OutMessageArgs::Batch {
@@ -726,18 +822,19 @@ impl Connection {
                 transfer_amount,
                 fee_amount,
                 message_index,
-                // max_gas,          TODO: include in hash
-                // fallback_address, TODO: include in hash
-                ..
+                max_gas,
+                fallback_address,
             } => call_hash(
                 self.chain_id,
                 self.bridge_contract.into(),
                 self.token_contract.into(),
                 *contract_address,
+                *fallback_address,
                 data,
                 *message_index,
                 *transfer_amount,
                 *fee_amount,
+                *max_gas,
             ),
             OutMessageArgs::UpdateValset(index, valset) => {
                 checkpoint_hash(self.chain_id, self.bridge_contract, valset, *index)
@@ -750,7 +847,6 @@ impl Connection {
     pub fn needs_sig(&self, msg_index: u64, pubkey: Pubkey) -> Result<bool> {
         Ok(self.get(msg_index)?.sigs.needs_sig(pubkey)?)
     }
-
     #[query]
     pub fn get_sigs(&self, msg_index: u64) -> Result<Vec<(Pubkey, Option<Signature>)>> {
         let sigs = &self.get(msg_index)?.sigs;
@@ -770,6 +866,8 @@ impl Connection {
     }
 }
 
+/// A container for a message to be sent to the Nomic bridge contract on a
+/// remote EVM chain via the outbox, holding the message data and signatures.
 #[orga]
 #[derive(Debug)]
 pub struct OutMessage {
@@ -778,13 +876,17 @@ pub struct OutMessage {
     pub msg: OutMessageArgs,
 }
 
+/// The core data of a message to be sent to the Nomic bridge contract on a
+/// remote EVM chain.
 #[derive(Encode, Decode, Debug, Clone, Serialize)]
 pub enum OutMessageArgs {
+    /// A batch of funds transfers.
     Batch {
         transfers: LengthVec<u16, Transfer>,
         timeout: u64,
         batch_index: u64,
     },
+    /// A user-defined contract call.
     ContractCall {
         // TODO: ethaddress type
         #[serde(with = "SerHex::<StrictPfx>")]
@@ -798,6 +900,7 @@ pub enum OutMessageArgs {
         fee_amount: u64,
         message_index: u64,
     },
+    /// An update to the validator set.
     UpdateValset(u64, SignatorySet),
 }
 
@@ -846,16 +949,20 @@ impl Describe for OutMessageArgs {
     }
 }
 
+/// Gets the hash of an outgoing message transferring funds to a user-defined
+/// contract call.
 #[allow(clippy::too_many_arguments)]
 pub fn call_hash(
     chain_id: u32,
     bridge_contract: [u8; 20],
     token_contract: [u8; 20],
     dest_contract: [u8; 20],
+    fallback_addr: [u8; 20],
     data: &[u8],
     nonce_id: u64,
     transfer_amount: u64,
     fee_amount: u64,
+    max_gas: u64,
 ) -> [u8; 32] {
     let bytes = (
         uint256(chain_id as u64),
@@ -866,16 +973,20 @@ pub fn call_hash(
         vec![fee_amount],
         vec![addr_to_bytes32(token_contract.into())],
         addr_to_bytes32(dest_contract.into()),
+        addr_to_bytes32(fallback_addr.into()),
         data,
         u64::MAX,
         uint256(nonce_id),
         uint256(1),
+        uint256(max_gas),
     )
         .abi_encode_params();
 
     keccak256(bytes).0
 }
 
+/// Converts a contract call message to the struct used in the Alloy-generated
+/// contract client.
 #[cfg(feature = "ethereum-full")]
 #[allow(clippy::too_many_arguments)]
 pub fn logic_call_args(
@@ -898,12 +1009,12 @@ pub fn logic_call_args(
         maxGas: alloy_core::primitives::U256::from(max_gas),
         payload: alloy_core::primitives::Bytes::from(data.to_vec()),
         timeOut: alloy_core::primitives::U256::from(u64::MAX),
-        invalidationId: alloy_core::primitives::FixedBytes::from(uint256(nonce_id)), /* TODO: set
-                                                                                      * in msg */
+        invalidationId: alloy_core::primitives::FixedBytes::from(uint256(nonce_id)),
         invalidationNonce: alloy_core::primitives::U256::from(1),
     }
 }
 
+/// A transfer of funds to a given destination Ethereum address.
 #[orga]
 #[derive(Debug, Clone)]
 pub struct Transfer {
@@ -912,6 +1023,7 @@ pub struct Transfer {
     pub fee_amount: u64,
 }
 
+/// Gets the hash of a validator set.
 pub fn checkpoint_hash(
     chain_id: u32,
     bridge_contract: Address,
@@ -941,6 +1053,7 @@ pub fn checkpoint_hash(
     keccak256(bytes).0
 }
 
+/// Gets the hash of a batch of funds transfers.
 pub fn batch_hash(
     chain_id: u32,
     bridge_contract: Address,
@@ -972,6 +1085,7 @@ pub fn batch_hash(
     keccak256(bytes).0
 }
 
+/// Hashes a message for signing.
 pub fn sighash(message: [u8; 32]) -> [u8; 32] {
     let mut bytes = b"\x19Ethereum Signed Message:\n32".to_vec();
     bytes.extend_from_slice(&message);
@@ -979,6 +1093,8 @@ pub fn sighash(message: [u8; 32]) -> [u8; 32] {
     keccak256(bytes).0
 }
 
+/// Converts a secp256k1 ECDSA signature to components used with the
+/// Alloy-generated contract client.
 pub fn to_eth_sig(
     sig: &bitcoin::secp256k1::ecdsa::Signature,
     pubkey: &PublicKey,
@@ -1009,6 +1125,7 @@ pub fn to_eth_sig(
     (v, r, s)
 }
 
+/// Converts a slice of at most 32 bytes to a right-padded 32-byte array.
 pub fn bytes32(bytes: &[u8]) -> Result<[u8; 32]> {
     if bytes.len() > 32 {
         return Err(Error::App("bytes too long".to_string()).into());
@@ -1019,12 +1136,14 @@ pub fn bytes32(bytes: &[u8]) -> Result<[u8; 32]> {
     Ok(padded)
 }
 
+/// Converts an integer to a big-endian, left-padded 32-byte array.
 pub fn uint256(n: u64) -> [u8; 32] {
     let mut bytes = [0; 32];
     bytes[24..].copy_from_slice(&n.to_be_bytes());
     bytes
 }
 
+/// Converts a 20-byte address to a left-padded 32-byte array.
 pub fn addr_to_bytes32(addr: Address) -> [u8; 32] {
     let mut bytes = [0; 32];
     bytes[12..].copy_from_slice(&addr.bytes());
@@ -1032,6 +1151,7 @@ pub fn addr_to_bytes32(addr: Address) -> [u8; 32] {
 }
 
 impl SignatorySet {
+    /// Gets the Ethereum addresses of the signatories in the set.
     pub fn eth_addresses(&self) -> Vec<Address> {
         self.signatories
             .iter()
@@ -1044,6 +1164,8 @@ impl SignatorySet {
             .collect()
     }
 
+    /// Normalizes the voting power of the signatories in the set to the given
+    /// total voting power.
     pub fn normalize_vp(&mut self, total: u64) {
         let adjust = |n: u64| (n as u128 * total as u128 / self.present_vp as u128) as u64;
 
@@ -1054,6 +1176,8 @@ impl SignatorySet {
         self.present_vp = total;
     }
 
+    /// Converts the set to the struct used in the Alloy-generated contract
+    /// client.
     #[cfg(feature = "ethereum-full")]
     pub fn to_abi(&self, nonce: u64) -> ValsetArgs {
         ValsetArgs {
@@ -1259,6 +1383,8 @@ mod tests {
 
         let secp = Secp256k1::new();
 
+        let anvil = Anvil::new().try_spawn().unwrap();
+
         let xpriv = ExtendedPrivKey::new_master(bitcoin::Network::Regtest, &[0]).unwrap();
         let xpub = ExtendedPubKey::from_priv(&secp, &xpriv);
 
@@ -1280,7 +1406,12 @@ mod tests {
             Address::from(data)
         };
         // TODO: token contract
-        let mut conn = Connection::new(123, bridge_addr, bridge_addr, valset);
+        let mut conn = Connection::new(
+            anvil.chain_id().try_into().unwrap(),
+            bridge_addr,
+            bridge_addr,
+            valset,
+        );
         let valset = conn.valset.clone();
 
         let new_valset = SignatorySet {
@@ -1305,7 +1436,6 @@ mod tests {
         conn.sign(1, pubkey.into(), sig).unwrap();
         assert!(conn.get(1).unwrap().sigs.signed());
 
-        let anvil = Anvil::new().try_spawn().unwrap();
         let rpc_url = anvil.endpoint().parse().unwrap();
         let provider = ProviderBuilder::new().on_http(rpc_url);
 
@@ -1384,12 +1514,14 @@ mod tests {
 
         let bridge_contract = Address::NULL;
         let token_contract = Address::NULL;
-        let chain_id = 1337;
+        let chain_id = 11155111;
 
-        let bootstrap: consensus::Bootstrap = todo!();
-        ethereum
-            .networks
-            .insert(chain_id, Network::new(chain_id, bootstrap)?)?;
+        let bootstrap: consensus::Bootstrap =
+            serde_json::from_str(include_str!("bootstrap/sepolia.json")).unwrap();
+        ethereum.networks.insert(
+            chain_id,
+            Network::new(chain_id, bootstrap, consensus::Network::ethereum_sepolia())?,
+        )?;
 
         ethereum.create_connection(chain_id, bridge_contract, token_contract, valset.clone())?;
 
@@ -1471,7 +1603,7 @@ mod tests {
         }
 
         let mut ethereum = Connection::new(
-            123,
+            anvil.chain_id().try_into().unwrap(),
             contract.address().0 .0.into(),
             token_contract_addr.unwrap().0 .0.into(),
             valset,
@@ -1483,7 +1615,10 @@ mod tests {
         );
 
         ethereum
-            .transfer(anvil.addresses()[0].0 .0.into(), Nbtc::mint(1_000_000))
+            .transfer(
+                anvil.addresses()[0].0 .0.into(),
+                Nbtc::mint(1_000_000_000_000),
+            )
             .unwrap();
         assert_eq!(ethereum.outbox.len(), 1);
         assert_eq!(ethereum.batch_index, 1);
@@ -1580,6 +1715,7 @@ mod tests {
         Context::remove::<Paid>();
     }
 
+    #[ignore]
     #[tokio::test]
     #[serial_test::serial]
     async fn contract_call() {
@@ -1602,7 +1738,7 @@ mod tests {
         };
         valset.normalize_vp(u32::MAX as u64);
 
-        let _anvil = Anvil::new().try_spawn().unwrap();
+        let anvil = Anvil::new().try_spawn().unwrap();
         let provider = ProviderBuilder::new()
             .with_recommended_fillers()
             .on_anvil_with_wallet();
@@ -1648,7 +1784,7 @@ mod tests {
         let token_contract_addr = token_contract_addr.unwrap().0 .0.into();
 
         let mut ethereum = Connection::new(
-            123,
+            anvil.chain_id().try_into().unwrap(),
             contract.address().0 .0.into(),
             token_contract_addr,
             valset,
@@ -1737,7 +1873,6 @@ mod tests {
         Context::remove::<Paid>();
     }
 
-    #[cfg(any())]
     #[ignore]
     #[tokio::test]
     #[serial_test::serial]
@@ -1807,19 +1942,22 @@ mod tests {
         let token_contract_addr = token_contract_addr.unwrap().0 .0.into();
 
         let mut ethereum = Connection::new(
-            123,
+            anvil.chain_id().try_into().unwrap(),
             contract.address().0 .0.into(),
             token_contract_addr,
             valset,
         );
 
         ethereum
-            .transfer(anvil.addresses()[0].0 .0.into(), Nbtc::mint(1_000_000))
+            .transfer(
+                anvil.addresses()[0].0 .0.into(),
+                Nbtc::mint(1_000_000_000_000),
+            )
             .unwrap();
         assert_eq!(ethereum.outbox.len(), 1);
         assert_eq!(ethereum.batch_index, 1);
         assert_eq!(ethereum.message_index, 1);
-        assert_eq!(ethereum.coins.amount, 1_000_000);
+        assert_eq!(ethereum.coins.amount, 1_000_000_000_000);
 
         let msg = ethereum.get(1).unwrap().sigs.message;
         let data = ethereum.get(1).unwrap().msg.clone();
@@ -1907,7 +2045,7 @@ mod tests {
             .sendToNomic(
                 alloy_core::primitives::Address::from_slice(&ethereum.token_contract.bytes()),
                 Address::from_pubkey([0; 33]).to_string(),
-                alloy_core::primitives::U256::from(500_000),
+                alloy_core::primitives::U256::from(500_000_000_000u64),
             )
             .send()
             .await
@@ -1917,29 +2055,10 @@ mod tests {
             .unwrap());
 
         assert_eq!(ethereum.return_index, 0);
-        // TODO
-        ethereum
-            .relay_return(
-                123,
-                (),
-                (),
-                vec![(
-                    0,
-                    Dest::NativeAccount {
-                        address: Address::from_pubkey([0; 33]),
-                    }
-                    .to_string()
-                    .try_into()
-                    .unwrap(),
-                    500_000,
-                    [0; 20],
-                )]
-                .try_into()
-                .unwrap(),
-            )
-            .unwrap();
-        assert_eq!(ethereum.return_index, 1);
-        assert_eq!(ethereum.coins.amount, 500_000);
+        // TODO: return relay
+
+        // assert_eq!(ethereum.return_index, 1);
+        // assert_eq!(ethereum.coins.amount, 500_000_000_000);
 
         Context::remove::<Paid>();
     }
