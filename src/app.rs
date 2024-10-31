@@ -305,6 +305,7 @@ impl InnerApp {
     ) -> Result<()> {
         #[cfg(feature = "ethereum")]
         {
+            disable_fee();
             let signer = self.signer()?;
             let mut coins = self.bitcoin.accounts.withdraw(signer, amount)?;
 
