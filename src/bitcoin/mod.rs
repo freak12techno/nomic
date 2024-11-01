@@ -787,7 +787,7 @@ impl Bitcoin {
             );
         }
 
-        let value = Into::<u64>::into(amount) / self.config.units_per_sat;
+        let value = (Into::<u64>::into(amount) - fee_amount) / self.config.units_per_sat;
         if value < self.config.min_withdrawal_amount {
             return Err(OrgaError::App(
                 "Withdrawal is smaller than than the minimum amount".to_string(),
